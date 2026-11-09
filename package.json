@@ -29,7 +29,7 @@
   "license": "MIT",
   "author": "Jos De Roo",
   "dependencies": {
-    "eyemind": "^0.4.0"
+    "eyemind": "^0.5.0"
   },
   "keywords": [
     "n3",
