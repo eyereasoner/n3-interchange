@@ -387,6 +387,24 @@ def(`${STRING}substring`, 'n3_string_substring', `
 // (S Start Length) string:substring O, counting from 1.
 implied_by(n3_string_substring([S, I], O), [n3_str(S, A), atom_length(A, N), n3_num(I, I0), is(L, sub(add(N, 1), I0)), n3_string_substring([S, I, L], O)])
 implied_by(n3_string_substring([S, I, L], O), [n3_str(S, A), n3_num(I, I0), n3_num(L, L0), atom_chars(A, Cs), is(K, max(0, sub(I0, 1))), n3_take(K, Cs, _, Rest), n3_prefix_n(Rest, L0, Sub), atom_chars(T, Sub), n3_str_result(T, O)])`, ['n3_str', 'n3_num', 'n3_str_result', 'n3_digits', 'n3_format']);
+// (S I) string:charAt C and (S I C) string:setCharAt T, counting from 0; an
+// index out of range gives "" and leaves S as it is.
+def(`${STRING}charAt`, 'n3_string_charAt', `
+implied_by(n3_string_charAt([S, I0], O), [n3_str(S, A), n3_num(I0, N), is(I, trunc(N)), atom_chars(A, Cs), n3_char_at(Cs, I, C), n3_str_result(C, O)])
+implied_by(n3_char_at(Cs, I, C), [n3_length(Cs, L), n3_in_range(I, L, F), n3_char_at_(F, Cs, I, C)])
+implied_by(n3_char_at_('yes', Cs, I, C), n3_take(I, Cs, _, [C, ..._]))
+implied_by(n3_char_at_('no', _, _, ''), 'true')
+implied_by(n3_in_range(I, L, F), once(or(and(ge(I, 0), lt(I, L), unify(F, 'yes')), unify(F, 'no'))))`,
+['n3_str', 'n3_num', 'n3_str_result', 'n3_length', 'n3_digits']);
+def(`${STRING}setCharAt`, 'n3_string_setCharAt', `
+implied_by(n3_string_setCharAt([S, I0, C0], O), [n3_str(S, A), n3_num(I0, N), is(I, trunc(N)), n3_str(C0, C), atom_chars(A, Cs), atom_chars(C, Ds), n3_length(Cs, L), n3_in_range(I, L, F), n3_set_at(F, Cs, I, Ds, Out), atom_chars(T, Out), n3_str_result(T, O)])
+implied_by(n3_set_at('no', Cs, _, _, Cs), 'true')
+implied_by(n3_set_at('yes', Cs, I, Ds, Out), [n3_take(I, Cs, Pre, [_, ...Post]), n3_first_char(Ds, Fs), n3_append(Fs, Post, Rest), n3_append(Pre, Rest, Out)])
+fact(n3_first_char([], []))
+implied_by(n3_first_char([D, ..._], [D]), 'true')
+implied_by(n3_in_range(I, L, F), once(or(and(ge(I, 0), lt(I, L), unify(F, 'yes')), unify(F, 'no'))))`,
+['n3_str', 'n3_num', 'n3_str_result', 'n3_length', 'n3_digits', 'n3_append']);
+
 def(`${STRING}format`, 'n3_string_format', `
 implied_by(n3_string_format([F, ...Args], O), [n3_str(F, A), atom_chars(A, Cs), n3_format(Cs, Args, Out), atom_chars(T, Out), n3_str_result(T, O)])`, ['n3_str', 'n3_str_result', 'n3_format']);
 

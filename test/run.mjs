@@ -166,6 +166,11 @@ test('a built-in with nothing to compute holds, and its variables stay universal
   assert.match(out, /\{ \?x <http:\/\/www.w3.org\/2000\/10\/swap\/math#sin> 0\.0 \} => \{ :r :is \?x \} \./);
   assert.match(out, /:r :is 0\.0 \./);
 });
+test('string:charAt and string:setCharAt count from 0', () => {
+  const out = reason(`${P}{ ("abc" 1) string:charAt ?c. ("abc" 5) string:charAt ?d. ("abc" 1 "X") string:setCharAt ?s.
+      ("abc" 9 "X") string:setCharAt ?t } => { :r :is (?c ?d ?s ?t) }.`);
+  assert.match(out, /:r :is \("b" "" "aXc" "abc"\) \./);
+});
 test('numbers keep their kind: integers stay exact', () => {
   const out = reason(`${P}{ (9007199254740993 1) math:sum ?s. (2 0.5) math:product ?p } => { :r :is (?s ?p) }.`);
   assert.match(out, /:r :is \(9007199254740994 1\.0\) \./);
