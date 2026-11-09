@@ -1,5 +1,7 @@
 # n3-interchange
 
+[![npm](https://img.shields.io/npm/v/n3-interchange.svg)](https://www.npmjs.com/package/n3-interchange)
+
 Notation3 (N3) for [eyemind](https://github.com/eyereasoner/eyemind). It
 compiles N3 facts and rules into an eyemind program and writes eyemind's
 conclusions back as N3. Run together, eyemind becomes an N3 reasoner: it reads
