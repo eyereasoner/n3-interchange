@@ -15,9 +15,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The release message is the tag's; ./release gives the commit the same.
       - name: Get short message
         id: msg
-        run: echo "short=$(git log -1 --pretty=%s ${{ github.sha }})" >> $GITHUB_OUTPUT
+        run: |
+          git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          short=$(git tag -l --format='%(contents:subject)' "${{ github.ref_name }}")
+          echo "short=${short:-$(git log -1 --pretty=%s ${{ github.sha }})}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         env:

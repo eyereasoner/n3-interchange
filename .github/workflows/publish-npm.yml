@@ -67,8 +67,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # npm pack lists the files without asking the registry, which would
+      # refuse even a dry run of a version it already has.
       - name: Verify packaged files
-        run: npm publish --dry-run
+        run: npm pack --dry-run
 
       # npm accepts n3-interchange versions only through this workflow's
       # trusted publisher, which exchanges the Actions identity for a
