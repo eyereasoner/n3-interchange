@@ -4,22 +4,15 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkProof, loadText } from 'eyemind';
-import { compileN3, eyemindToN3, parseN3, reasonN3 } from '../src/index.mjs';
+import { compileN3, eyemindToN3, fetchSourceDocuments, parseN3, reasonN3 } from '../src/index.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 let passed = 0;
 let failed = 0;
-function test(name, fn) {
-  try {
-    fn();
-    passed++;
-  } catch (error) {
-    failed++;
-    console.log(`not ok - ${name}\n  ${String(error.stack ?? error).split('\n').slice(0, 6).join('\n  ')}`);
-  }
-}
+const tests = [];
+const test = (name, fn) => tests.push([name, fn]);
 const reason = (text, options) => reasonN3(text, options).n3;
 const P = '@prefix : <http://example.org/#>.\n';
 
@@ -55,7 +48,7 @@ test('compiler: IRIs are iri(Text) and rules are eyemind rules', () => {
   assert.match(program, /^implies\(rdf\(X, iri\("http:\/\/example.org\/#p"\), Y\), rdf\(Y, iri\("http:\/\/example.org\/#q"\), X\)\)$/m);
 });
 test('compiler: an unsupported built-in is an error that says why', () => {
-  assert.throws(() => compileN3(`${P}{ <http://e/doc> log:semantics ?f } => { :t :is ?f }.`), /log:semantics is not supported: eyemind has no file and network access/);
+  assert.throws(() => compileN3(`${P}{ "" time:localTime ?t } => { :t :is ?t }.`), /time:localTime is not supported: eyemind has no clock/);
 });
 test('compiler: a constant pattern drops escapes Unicode mode forbids', () => {
   const { program } = compileN3(`${P}{ ?s :p ?t. ?t string:matches "a\\\\:b\\\\.c" } => { ?s :ok true }.`);
@@ -135,6 +128,43 @@ test('digests, skolem IRIs, Unicode case and formula conjunction', () => {
   assert.equal(same.length, 1);
   assert.match(same[0], /^<https:\/\/eyereasoner.github.io\/.well-known\/genid\/[0-9a-f]{64}>$/);
   assert.notEqual(same[0], other);
+});
+test('documents a program names are read before compiling', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'n3-interchange-'));
+  writeFileSync(join(dir, 'hello.n3'), '@prefix : <http://example.org/#>.\n:Hello a :World.\n');
+  writeFileSync(join(dir, 'broken.n3'), ':Hello a\n');
+  const url = (name) => pathToFileURL(join(dir, name)).href;
+  const text = `${P}{ <${url('hello.n3')}> log:semantics ?f. ?f log:includes { :Hello a ?c }.
+      <${url('hello.n3')}> log:content ?t. <${url('broken.n3')}> log:semanticsOrError ?e.
+      <${url('missing.n3')}> log:semanticsOrError ?m }
+    => { :r :is (?c ?t ?e ?m) }.`;
+  const documents = await fetchSourceDocuments(text);
+  const out = reasonN3(text, { documents }).n3;
+  assert.match(out, /:r :is \(:World """@prefix : <http:\/\/example.org\/#>.\n:Hello a :World.\n""" /);
+  assert.match(out, /"error\(parse_error,N3 syntax, line \d+: [^"]*\)" "error\(dereference_failed,file:[^"]*missing.n3\)"\) \./);
+  // Without the documents fetched, the built-ins have nothing to read.
+  assert.equal(reasonN3(text).n3, '');
+});
+test('comparisons with infinity, formula equality up to renaming, and rdf:nil as a list', () => {
+  const out = reason(`${P}:t :v rdf:nil.
+    { "INF"^^xsd:float math:greaterThan 42. 42 math:greaterThan "-INF"^^xsd:double.
+      { _:x :b :c. :d :e :f } log:equalTo { :d :e :f. _:y :b :c }.
+      :t :v ?l. ?l list:length 0 } => { :r :is :ok }.
+    { { :a :b :c. :d :e :f } log:notEqualTo { :d :e :f. :a :b :c } } => { :r :is :wrong }.
+    { ?x math:greaterThan "INF"^^xsd:float } => { :r :is :unbound }.`);
+  assert.match(out, /:r :is :ok \./);
+  assert.doesNotMatch(out, /:wrong|:unbound/);
+});
+test('a built-in waits for a later built-in that binds its input', () => {
+  const out = reason(`${P}{ (?x 1) math:sum ?y. ?x math:greaterThan 3. ?x math:cos ?c. (2 4) list:iterate (?i ?x) } => { :r :is (?x ?y) }.
+    { ?z math:greaterThan -0.5. ?z math:cos ?w. ?z math:lessThan 0.5. (1) list:iterate (?j ?w) } => { :s :is ?z }.`);
+  assert.match(out, /:r :is \(4 5\) \./);
+  assert.match(out, /:s :is 0\.0 \./);
+});
+test('a built-in with nothing to compute holds, and its variables stay universal', () => {
+  const out = reason(`${P}{ ?x math:sin ?y } => { { ?x math:sin 0.0 } => { :r :is ?x } }.`);
+  assert.match(out, /\{ \?x <http:\/\/www.w3.org\/2000\/10\/swap\/math#sin> 0\.0 \} => \{ :r :is \?x \} \./);
+  assert.match(out, /:r :is 0\.0 \./);
 });
 test('numbers keep their kind: integers stay exact', () => {
   const out = reason(`${P}{ (9007199254740993 1) math:sum ?s. (2 0.5) math:product ?p } => { :r :is (?s ?p) }.`);
@@ -217,5 +247,14 @@ test('eyemind-to-n3 reads conclusions without running them', () => {
   assert.throws(() => eyemindToN3('rdf(1 + 2, a, b)'), /expected/);
 });
 
+for (const [name, fn] of tests) {
+  try {
+    await fn();
+    passed++;
+  } catch (error) {
+    failed++;
+    console.log(`not ok - ${name}\n  ${String(error.stack ?? error).split('\n').slice(0, 6).join('\n  ')}`);
+  }
+}
 console.log(`${failed ? 'FAIL' : 'ok'} ${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

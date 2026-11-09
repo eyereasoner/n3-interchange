@@ -32,22 +32,26 @@ const RESERVED = new Set(['Math', 'JSON', 'BigInt', 'Infinity', 'NaN', 'undefine
 // Compile an N3 document. Options: base (IRI), source (a name for the
 // header). Returns { program, prefixes, queries } where queries counts the
 // log:query rules; with any, the program concludes their result/3 triples.
-export function compileN3(text, { base = '', source = 'input' } = {}) {
+export function compileN3(text, { base = '', source = 'input', documents } = {}) {
   const doc = parseN3(text, { base });
-  return compileN3Document(doc, { source });
+  return compileN3Document(doc, { source, documents });
 }
 
-export function compileN3Document(doc, { source = 'input' } = {}) {
+export function compileN3Document(doc, { source = 'input', documents = new Map() } = {}) {
   const facts = [];
   const rules = [];
   const needed = new Set();
   let queries = 0;
-  // Only a document that mentions rdf:first or rdf:rest can write a list out
-  // as triples, so only its built-ins read lists that way.
-  const views = usesPredicate(doc.triples, `${RDF_NS}first`) || usesPredicate(doc.triples, `${RDF_NS}rest`) ||
-    mentions(doc.triples, `${RDF_NS}first`) || mentions(doc.triples, `${RDF_NS}rest`);
+  // Only a document that mentions rdf:first, rdf:rest or rdf:nil can write a
+  // list out as triples, so only its built-ins read lists that way.
+  const views = ['first', 'rest', 'nil'].some((name) => mentions(doc.triples, `${RDF_NS}${name}`));
+  const rulesAsTriples = doc.triples.some((x) => x.p.t === 'iri' && RULE_PREDICATES.has(x.p.v) && isFormulaLike(x.s) &&
+    variablePredicate(triplesOf(x.s)));
   for (const triple of doc.triples) {
     const p = triple.p.t === 'iri' ? triple.p.v : null;
+    // A rule is also a triple of the document, its variables quoted, which
+    // only a pattern with a variable predicate can find.
+    if (rulesAsTriples && RULE_PREDICATES.has(p) && isFormulaLike(triple.s) && isFormulaLike(triple.o)) facts.push(`fact(${new Context(false).rdf(triple)})`);
     if (p === `${LOG}implies` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
       rules.push(compileRule(triple.s, triple.o, 'forward', needed, views));
     } else if (p === `${LOG}impliedBy` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
@@ -60,12 +64,68 @@ export function compileN3Document(doc, { source = 'input' } = {}) {
       facts.push(`fact(${ctx.rdf(triple)})`);
     }
   }
+  // The documents log:semantics and log:content read, fetched beforehand.
+  let documentNumber = 0;
+  const fetchedFormulas = [];
+  for (const [iri, document] of documents) {
+    const ctx = new Context(false);
+    const subject = `iri(${q(iri)})`;
+    // Errors are written as N3 reasoners write them:
+    // error(dereference_failed,IRI) and error(parse_error,Message).
+    if (document.error !== undefined) {
+      facts.push(`fact(n3_document_error(${subject}, ${q(`error(dereference_failed,${iri.replace(/#.*$/, '')})`)}))`);
+      continue;
+    }
+    facts.push(`fact(n3_content(${subject}, ${q(document.text)}))`);
+    try {
+      const parsed = parseN3(document.text, { base: iri.replace(/#.*$/, '') });
+      // Its blank nodes are its own, apart from any other document's.
+      const label = `d${++documentNumber}`;
+      const own = (t) => (t.t === 'bnode' ? { ...t, scope: `${label}.${t.scope}` } : t.t === 'list' ? { ...t, items: t.items.map(own) }
+        : t.t === 'graph' ? { ...t, triples: t.triples.map(ownTriple) } : t.t === 'triple' ? ownTriple(t) : t);
+      const ownTriple = (x) => ({ ...x, s: own(x.s), p: own(x.p), o: own(x.o) });
+      const formula = { t: 'graph', triples: parsed.triples.map(ownTriple), scope: 0 };
+      facts.push(`fact(n3_semantics(${subject}, ${ctx.term(formula)}))`);
+      fetchedFormulas.push(formula);
+    } catch (error) {
+      if (!(error instanceof N3SyntaxError)) throw error;
+      facts.push(`fact(n3_document_error(${subject}, ${q(`error(parse_error,${error.message})`)}))`);
+    }
+  }
   // log:conclusion reads the closure of a formula the document states, worked
   // out now by running the formula as a program of its own.
+  // A fetched document's formula counts as stated, but a closure eyemind
+  // cannot work out, as for an unstratified document, is left out.
   if (usesPredicate(doc.triples, `${LOG}conclusion`)) {
     for (const formula of statedFormulas(doc.triples)) {
       const ctx = new Context(false);
       facts.push(`fact(n3_conclusion_of(${ctx.term(formula)}, ${ctx.term(closure(formula))}))`);
+    }
+    for (const formula of fetchedFormulas) {
+      let closed;
+      try {
+        closed = closure(formula);
+      } catch (error) {
+        if (error instanceof N3CompileError || error?.name === 'EyemindError') continue;
+        throw error;
+      }
+      const ctx = new Context(false);
+      facts.push(`fact(n3_conclusion_of(${ctx.term(formula)}, ${ctx.term(closed)}))`);
+    }
+  }
+  // log:parsedAsN3 reads the strings the document states that are N3, parsed
+  // now.
+  if (usesPredicate(doc.triples, `${LOG}parsedAsN3`)) {
+    for (const literal of statedStrings(doc.triples)) {
+      let parsed;
+      try {
+        parsed = parseN3(literal.v);
+      } catch (error) {
+        if (error instanceof N3SyntaxError) continue;
+        throw error;
+      }
+      const ctx = new Context(false);
+      facts.push(`fact(n3_parsed(${ctx.term(literal)}, ${ctx.term({ t: 'graph', triples: parsed.triples, scope: 0 })}))`);
     }
   }
   const lines = [
@@ -139,6 +199,17 @@ function termUses(t, iri) {
   return false;
 }
 
+// The plain strings the document's own facts state, each once.
+function statedStrings(triples) {
+  const found = new Map();
+  const visit = (t) => {
+    if (t.t === 'literal' && t.dt === `${XSD}string`) found.set(t.v, t);
+    else if (t.t === 'list') t.items.forEach(visit);
+  };
+  for (const x of triples) [x.s, x.o].forEach(visit);
+  return [...found.values()];
+}
+
 // The formulas the document's own facts state, each once, outermost first.
 function statedFormulas(triples) {
   const found = [];
@@ -151,6 +222,14 @@ function statedFormulas(triples) {
     if (!rule) [x.s, x.o].forEach(visit);
   }
   return found;
+}
+
+const RULE_PREDICATES = new Set([`${LOG}implies`, `${LOG}impliedBy`]);
+
+// Whether a pattern, at any depth of quoted formulas, has a variable predicate.
+function variablePredicate(triples) {
+  const term = (t) => (t.t === 'graph' ? variablePredicate(t.triples) : t.t === 'list' ? t.items.some(term) : false);
+  return triples.some((x) => x.p.t === 'var' || x.p.t === 'bnode' || term(x.s) || term(x.o));
 }
 
 const isFormulaLike = (t) => t.t === 'graph' || (t.t === 'literal' && t.dt === `${XSD}boolean`);
@@ -333,6 +412,16 @@ function compileRule(body, head, kind, needed, views = true) {
     return keys;
   };
   const goals = (triples, negated) => triples.flatMap((x) => goal(x, negated));
+  // A body triple with variables, none of which another body triple, or an
+  // enclosing rule, can bind.
+  const unconstrained = (x) => {
+    const keys = keysOfTriple(x);
+    if (!keys.size || bodyTriples.indexOf(x) < 0 || ![x.s, x.o].every((t) => t.t === 'var' || t.t === 'bnode')) return false;
+    // A backward rule's caller binds its conclusion's variables.
+    if (kind === 'backward' && [...keys].some((key) => headKeys.has(key))) return false;
+    for (const y of bodyTriples) if (y !== x) for (const key of keysOfTriple(y)) if (keys.has(key)) return false;
+    return true;
+  };
   // How many negations or collections the goal being compiled is inside.
   let closed = 0;
   let listViews = 0;
@@ -398,9 +487,13 @@ function compileRule(body, head, kind, needed, views = true) {
     }
     if (p === `${LOG}parsedAsN3`) {
       // A string written in the rule is parsed now, and compared with the
-      // object as a formula; text only known when the rule runs, or text
-      // that is not N3, gives no formula.
-      if (x.s.t !== 'literal') return ["'fail'"];
+      // object as a formula; one known when the rule runs is looked up among
+      // the strings the document states, parsed now too; text that is not
+      // N3 gives no formula.
+      if (x.s.t !== 'literal') {
+        needed.add(p);
+        return [`n3_log_parsedAsN3(${ctx.term(x.s)}, ${ctx.term(x.o)})`];
+      }
       let parsed;
       try {
         parsed = parseN3(x.s.v);
@@ -415,8 +508,30 @@ function compileRule(body, head, kind, needed, views = true) {
       // A constant that is no formula: equality is unification.
       return [`${p === `${LOG}equalTo` ? 'unify' : 'not_unify'}(${ctx.term(x.s)}, ${ctx.term(x.o)})`];
     }
+    if (p === `${LOG}conclusion` && x.s.t === 'graph') {
+      // A formula written in the rule, sharing no variable with it, has its
+      // closure worked out now.
+      const out = outside(x);
+      if (![...keysOf(x.s)].some((key) => out.has(key))) {
+        needed.add(p);
+        return [`n3_conclusion_result(${new Context(false).term(closure(x.s))}, ${ctx.term(x.o)})`];
+      }
+    }
     if (REGEX_PATTERN.has(p)) x = withPattern(x, REGEX_PATTERN.get(p));
+    if (p === `${STRING}replace` && x.s.t === 'list' && x.s.items[2]?.t === 'literal') {
+      // A replacement escapes $ and \ with a backslash, as in Perl; in
+      // eyemind's replacement $$ is a dollar sign and a backslash is itself.
+      const items = [...x.s.items];
+      items[2] = { ...items[2], v: items[2].v.replace(/\\([$\\])|\$/g, (m, c) => (c === '$' ? '$$' : c === '\\' ? '\\' : m)) };
+      x = { ...x, s: { ...x.s, items } };
+    }
     const builtin = BUILTINS.get(p);
+    if (builtin && !negated && !closed && unconstrained(x)) {
+      // Every variable of the built-in is unbound and no other goal of the
+      // premise mentions it: nothing can be computed, and the goal holds
+      // without binding anything, as in N3 reasoners.
+      return [];
+    }
     if (builtin) {
       if (builtin.text) needed.add(p);
       // A list a built-in receives may be written out as rdf:first and
@@ -457,23 +572,30 @@ function compileRule(body, head, kind, needed, views = true) {
   const heads = headTriples.flatMap((h) => headTerm(h, kind));
   return [`implies(${premise}, ${heads.length === 1 ? heads[0] : `[${heads.join(', ')}]`})`];
 
-  // A conclusion: a triple, or a rule the firing states.
-  function headTerm(h, k) {
+  // A conclusion: a triple, or a rule the firing states. captured holds the
+  // variables the enclosing premises bind; a derived rule's conclusion may
+  // state rules in turn.
+  function headTerm(h, k, captured = null) {
     const p = h.p.t === 'iri' ? h.p.v : null;
     if (k === 'forward' && (p === `${LOG}implies` || p === `${LOG}impliedBy`) && isFormulaLike(h.s) && isFormulaLike(h.o)) {
       const [b, c] = p === `${LOG}implies` ? [h.s, h.o] : [h.o, h.s];
       const inner = conj(goals(triplesOf(b), false));
       const cs = triplesOf(c);
       if (cs.length === 0) throw new N3CompileError('a derived rule needs a conclusion');
+      if (captured === null) {
+        captured = new Set();
+        for (const x of bodyTriples) if (!(BUILTINS.has(x.p.v) && unconstrained(x))) keysOfTriple(x, captured);
+      }
       // The firing also concludes the rule as a triple, its own variables
       // quoted as qvar(Name) and qbnode(Label), as N3 reasoners report derived rules.
-      const captured = new Set();
-      for (const x of bodyTriples) keysOfTriple(x, captured);
       ctx.quoted = new Set([...keysOfTriple(h)].filter((key) => !captured.has(key)));
       const asTriple = ctx.rdf(h);
       ctx.quoted = null;
       if (p === `${LOG}impliedBy`) return [...cs.map((y) => `implied_by(${ctx.rdf(y)}, ${inner})`), asTriple];
-      return [`implies(${inner}, ${cs.length === 1 ? ctx.rdf(cs[0]) : `[${cs.map((y) => ctx.rdf(y)).join(', ')}]`})`, asTriple];
+      const within = new Set(captured);
+      keysOf(b, within);
+      const conclusions = cs.flatMap((y) => headTerm(y, k, within));
+      return [`implies(${inner}, ${conclusions.length === 1 ? conclusions[0] : `[${conclusions.join(', ')}]`})`, asTriple];
     }
     return [ctx.rdf(h, k === 'query' ? 'result' : 'rdf')];
   }
@@ -489,7 +611,8 @@ const TESTS = new Set([
 ]);
 const INLINE = new Set([`${LIST}map`]);
 // Built-ins that also run from a bound object to their subject.
-const REVERSIBLE = new Set([`${LIST}firstRest`, `${LIST}append`, `${LOG}uri`, `${LOG}dtlit`, `${LOG}langlit`, `${MATH}negation`]);
+const REVERSIBLE = new Set([`${LIST}firstRest`, `${LIST}append`, `${LOG}uri`, `${LOG}dtlit`, `${LOG}langlit`,
+  ...['negation', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'degrees', 'radians'].map((n) => `${MATH}${n}`)]);
 
 // Body triples in evaluation order. A built-in waits for the goals after it
 // that bind its inputs (a test's every variable, another built-in's
@@ -511,6 +634,10 @@ function reorder(triples, outside, given) {
   };
   const order = [];
   const bound = new Set(given);
+  // What the premise itself binds: a backward rule's conclusion is usually,
+  // but not always, bound by its caller, too weak a ground to run a
+  // built-in backward on.
+  const placed = new Set();
   const pending = [];
   // What a goal binds: an ordinary triple its variables, a test nothing, a
   // collection its list, and another built-in its object.
@@ -519,25 +646,49 @@ function reorder(triples, outside, given) {
     const p = x.p.v;
     if (TESTS.has(p) || SCOPED_SUBJECT.has(p)) return keys;
     if (p === `${LOG}collectAllIn`) return x.s.t === 'list' && x.s.items[2] ? keysOf(x.s.items[2], keys) : keys;
+    // One that also runs backward binds in the direction the premise
+    // supports: its object once its subject is bound, its subject once
+    // other goals of the premise bind its object, and otherwise nothing.
+    if (REVERSIBLE.has(p)) {
+      const others = later(0, x);
+      const known = (key) => bound.has(key) || others.has(key);
+      if ([...keysOf(x.s)].every(known)) return keysOf(x.o, keys);
+      if ([...keysOf(x.o)].every((key) => placed.has(key) || others.has(key))) return keysOf(x.s, keys);
+      return keys;
+    }
     return keysOf(x.o, keys);
   };
-  const later = (i) => {
+  // What the goals from position i bind, leaving one out and leaving out
+  // those that also run backward, which keeps this from looping.
+  const later = (i, skip = null) => {
     const keys = new Set();
-    for (let k = i; k < triples.length; k++) binds(triples[k], keys);
+    for (let k = i; k < triples.length; k++) {
+      const y = triples[k];
+      if (y !== skip && !(REVERSIBLE.has(y.p.v ?? '') && !isPlain(y))) binds(y, keys);
+    }
     return keys;
   };
   const place = (x) => {
     order.push(x);
     keysOfTriple(x, bound);
+    keysOfTriple(x, placed);
   };
   triples.forEach((x, i) => {
     if (isPlain(x)) place(x);
     else pending.push(x);
-    const rest = later(i + 1);
-    const waits = (keys) => [...keys].some((key) => !bound.has(key) && rest.has(key));
+    const rest = new Set();
+    for (let k = i + 1; k < triples.length; k++) binds(triples[k], rest);
     for (let k = 0; k < pending.length;) {
       const x = pending[k];
-      const waiting = waits(inputs(x)) && !(REVERSIBLE.has(x.p.v) && [...keysOf(x.o)].every((key) => bound.has(key)));
+      // It waits for later goals, and for pending ones, that bind its inputs.
+      const binders = new Set(rest);
+      for (const y of pending) if (y !== x) binds(y, binders);
+      const coming = (keys) => [...keys].some((key) => !bound.has(key) && binders.has(key));
+      // One that also runs backward is ready once either side is bound,
+      // and otherwise waits for whatever binds either side.
+      const reversible = REVERSIBLE.has(x.p.v);
+      const ready = reversible && ([...keysOf(x.s)].every((key) => bound.has(key)) || [...keysOf(x.o)].every((key) => placed.has(key)));
+      const waiting = !ready && (coming(inputs(x)) || (reversible && coming(keysOf(x.o))));
       if (waiting) { k++; continue; }
       place(pending.splice(k, 1)[0]);
       k = 0;

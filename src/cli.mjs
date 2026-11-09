@@ -1,11 +1,10 @@
 // The three commands: n3-to-eyemind, eyemind-to-n3 and eyemind-n3.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseN3 } from './n3-parser.mjs';
-import { compileN3 } from './n3-to-eyemind.mjs';
 import { eyemindToN3 } from './eyemind-to-n3.mjs';
 import { createRequire } from 'node:module';
 import { VERSION, checkProof, checkReport, loadText, publicReport, run, unusedClauses } from 'eyemind';
-import { DEFAULT_LIMITS, answersToN3, compileSources } from './run.mjs';
+import { DEFAULT_LIMITS, answersToN3, compileSources, fetchSourceDocuments } from './run.mjs';
 
 const PACKAGE = createRequire(import.meta.url)('../package.json');
 
@@ -31,9 +30,9 @@ function output(opts, text) {
   else process.stdout.write(text);
 }
 
-function main(fn) {
+async function main(fn) {
   try {
-    process.exitCode = fn(process.argv.slice(2)) ?? 0;
+    process.exitCode = (await fn(process.argv.slice(2))) ?? 0;
   } catch (error) {
     if (!(error instanceof Error) || error instanceof TypeError || error instanceof ReferenceError) throw error;
     process.stderr.write(`${error.message}\n`);
@@ -48,11 +47,13 @@ Compile N3 facts and rules into an eyemind program.
 `;
 
 export function n3ToEyemindMain() {
-  main((argv) => {
+  main(async (argv) => {
     const opts = parseArgs(argv, ['--base', '-o'], [], TO_EYEMIND);
     if (opts.files.length !== 1) throw new Error(TO_EYEMIND.trimEnd());
     const [file] = opts.files;
-    const { program } = compileN3(read(file), { base: opts['--base'] ?? '', source: file });
+    const sources = [[read(file), file]];
+    const base = opts['--base'] ?? '';
+    const { program } = compileSources(sources, { base, documents: await fetchSourceDocuments(sources, { base }) });
     output(opts, program);
   });
 }
@@ -111,7 +112,7 @@ const FLAGS = new Map([['-p', '--proof'], ['-c', '--prove-and-check'], ['-v', '-
 const LIMITS = { '--max-depth': 'maxDepth', '--max-iterations': 'maxIterations', '--max-inferences': 'maxInferences' };
 
 export function eyemindN3Main() {
-  main((argv) => {
+  main(async (argv) => {
     const opts = { files: [], goals: [] };
     for (let i = 0; i < argv.length; i++) {
       const arg = FLAGS.get(argv[i]) ?? argv[i];
@@ -152,7 +153,9 @@ export function eyemindN3Main() {
       limits[name] = value;
     }
 
-    const { doc, program: text } = compileSources(opts.files.map((file) => [read(file), file]), { base: opts['--base'] ?? '' });
+    const sources = opts.files.map((file) => [read(file), file]);
+    const base = opts['--base'] ?? '';
+    const { doc, program: text } = compileSources(sources, { base, documents: await fetchSourceDocuments(sources, { base }) });
     if (opts['--program']) {
       output(opts, text);
       return 0;

@@ -100,11 +100,23 @@ fact(n3_length([], 0))
 implied_by(n3_length([_, ...T], N), [n3_length(T, M), is(N, add(M, 1))])`,
   },
   n3_formulas: {
-    needs: ['n3_sort'],
+    needs: ['n3_sort', 'n3_includes'],
     text: `
-// n3_formulas(A, B, F): F is yes when A and B are both formulas.
+// n3_formulas(A, B, F): F is yes when A and B are both formulas, else no; call
+// it with F unbound, as a bound F would let the second branch answer for it.
+// n3_same_formula(A, B): each triple of either is a triple of the other,
+// variables and blank nodes matched by unification.
 implied_by(n3_formulas(A, B, F), once(or(and(is_nonvar(A), is_nonvar(B), unify(A, graph(_)), unify(B, graph(_)), unify(F, 'yes')), unify(F, 'no'))))
-implied_by(n3_triple_set(graph(Ts), S), n3_sort(Ts, S))`,
+implied_by(n3_triple_set(graph(Ts), S), n3_sort(Ts, S))
+implied_by(n3_same_formula(graph(As), graph(Bs)), [n3_all_members(As, Bs), n3_all_members(Bs, As)])`,
+  },
+  n3_conclusion_result: {
+    needs: ['n3_sort', 'n3_formulas'],
+    text: `
+// n3_conclusion_result(G, O): an unbound object becomes the formula G, a
+// bound one must hold the same triples.
+implied_by(n3_conclusion_result(C, O), [is_var(O), unify(O, C)])
+implied_by(n3_conclusion_result(graph(Ts), O), [is_nonvar(O), n3_sort(Ts, S), n3_triple_set(O, S)])`,
   },
   n3_member_at: {
     needs: ['n3_result'],
@@ -120,6 +132,7 @@ implied_by(n3_member_at([_, ...R], K, I, X), [is(K1, add(K, 1)), n3_member_at(R,
 // from a blank node is read as the list L; any other T is L itself.
 implied_by(n3_as_list(T, L), [once(n3_list_view(T, K)), n3_as_list_(K, T, L)])
 implied_by(n3_list_view(T, 'as_is'), is_var(T))
+implied_by(n3_list_view(iri('${RDF}nil'), 'described'), 'true')
 implied_by(n3_list_view(bnode(_, _), 'described'), 'true')
 implied_by(n3_list_view(skolem(_, _, _), 'described'), 'true')
 implied_by(n3_list_view(_, 'as_is'), 'true')
@@ -143,8 +156,11 @@ implied_by(n3_all_members([P, ...Ps], Ts), [n3_member(P, Ts), n3_all_members(Ps,
   },
   n3_round: {
     text: `
-// n3_round(X, R): X rounded to an integer, halves upward, so -1.5 is -1.
-implied_by(n3_round(X, R), is(R, floor(add(X, float(0.5)))))`,
+// n3_round(E, R): the value of E rounded to an integer, halves upward, so
+// -1.5 is -1; an integer is itself, however large.
+implied_by(n3_round(E, R), [is(X, E), n3_round_(X, R)])
+implied_by(n3_round_(X, X), is_int(X))
+implied_by(n3_round_(X, R), [is_float(X), is(R, floor(add(X, float(0.5))))])`,
   },
   n3_tquot: {
     text: `
@@ -306,12 +322,25 @@ implied_by(n3_math_${name}(L, O), [n3_nums(L, [N, ...Ns]), n3_${name}(Ns, N, V),
 fact(n3_${name}([], V, V))
 implied_by(n3_${name}([N, ...R], A, V), [is(B, ${fn}(A, N)), n3_${name}(R, B, V)])`, ['n3_nums', 'n3_result']);
 }
-for (const [name, op] of [['greaterThan', 'gt'], ['lessThan', 'lt'], ['notGreaterThan', 'le'], ['notLessThan', 'ge'],
-  ['equalTo', 'eq'], ['notEqualTo', 'ne']]) {
+// Comparisons with "INF" or "-INF" as xsd:float or xsd:double, which
+// eyemind numbers cannot hold, order [Rank, Value] pairs: -INF ranks 0, a
+// number 1, INF 2.
+HELPERS.n3_infinite = {
+  needs: ['n3_num'],
+  text: `
+implied_by(n3_extended(T, [1, V]), n3_num(T, V))
+implied_by(n3_extended(literal('INF', datatype(D)), [2, 0]), n3_float_type(D))
+implied_by(n3_extended(literal('-INF', datatype(D)), [0, 0]), n3_float_type(D))
+fact(n3_float_type('${XSD}float'), n3_float_type('${XSD}double'))
+implied_by(n3_infinite_order(S, O, C), [is_nonvar(S), is_nonvar(O), n3_extended(S, [R1, V1]), n3_extended(O, [R2, V2]), once(or(ne(R1, 1), ne(R2, 1))), compare(C, [R1, V1], [R2, V2])])`,
+};
+for (const [name, op, orders] of [['greaterThan', 'gt', ['>']], ['lessThan', 'lt', ['<']], ['notGreaterThan', 'le', ['<', '=']],
+  ['notLessThan', 'ge', ['>', '=']], ['equalTo', 'eq', ['=']], ['notEqualTo', 'ne', ['<', '>']]]) {
   def(`${MATH}${name}`, `n3_math_${name}`, `
 implied_by(n3_math_${name}(S, O), [n3_num(S, X), n3_num(O, Y), ${op}(X, Y)])
+implied_by(n3_math_${name}(S, O), [n3_infinite_order(S, O, C), ${orders.length === 1 ? `unify(C, '${orders[0]}')` : `or(unify(C, '${orders[0]}'), unify(C, '${orders[1]}'))`}])
 // (A B) math:${name} true compares A and B.
-implied_by(n3_math_${name}([A, B], literal('true', datatype('${XSD}boolean'))), [n3_num(A, X), n3_num(B, Y), ${op}(X, Y)])`, ['n3_num']);
+implied_by(n3_math_${name}([A, B], literal('true', datatype('${XSD}boolean'))), [n3_num(A, X), n3_num(B, Y), ${op}(X, Y)])`, ['n3_num', 'n3_infinite']);
 }
 
 // string: regular expressions, eyemind's ECMAScript patterns.
@@ -383,7 +412,7 @@ implied_by(n3_list_notMember(L, X), not(n3_member(X, L)))`, ['n3_member']);
 def(`${LIST}append`, 'n3_list_append', `
 // (L1 ... Ln) list:append L; with L given and two lists, every split.
 implied_by(n3_list_append(Ls, L), [is_ground(Ls), n3_appends(Ls, L)])
-implied_by(n3_list_append(Ls, L), [is_nonvar(Ls), unify(Ls, [A, B]), n3_ground_flag([A, B], 'no'), is_nonvar(L), n3_append(A, B, L)])
+implied_by(n3_list_append(Ls, L), [is_nonvar(Ls), unify(Ls, [A, B]), n3_ground_flag([A, B], F), unify(F, 'no'), is_nonvar(L), n3_append(A, B, L)])
 // n3_ground_flag(T, F): F is yes or no as T is ground, decided without
 // negation, which needs bound variables.
 implied_by(n3_ground_flag(T, F), once(or(and(is_ground(T), unify(F, 'yes')), unify(F, 'no'))))
@@ -450,9 +479,19 @@ implied_by(n3_log_skolem(S, O), [is_ground(S), term_text(S, T), digest('sha256',
 // compiling for every formula the document states (n3_conclusion_of facts);
 // a formula only built while reasoning has none.
 def(`${LOG}conclusion`, 'n3_log_conclusion', `
-implied_by(n3_log_conclusion(F, O), [is_nonvar(F), n3_conclusion_of(F, C), n3_conclusion_result(C, O)])
-implied_by(n3_conclusion_result(C, O), [is_var(O), unify(O, C)])
-implied_by(n3_conclusion_result(graph(Ts), O), [is_nonvar(O), n3_sort(Ts, S), n3_triple_set(O, S)])`, ['n3_sort', 'n3_formulas']);
+implied_by(n3_log_conclusion(F, O), [is_nonvar(F), n3_conclusion_of(F, C), n3_conclusion_result(C, O)])`, ['n3_conclusion_result']);
+
+// The documents a program names, read before compiling: their formula,
+// text, or the error that kept them from being read.
+def(`${LOG}semantics`, 'n3_log_semantics', `
+implied_by(n3_log_semantics(S, O), [is_nonvar(S), n3_semantics(S, G), n3_conclusion_result(G, O)])`, ['n3_conclusion_result']);
+def(`${LOG}semanticsOrError`, 'n3_log_semanticsOrError', `
+implied_by(n3_log_semanticsOrError(S, O), [is_nonvar(S), n3_semantics(S, G), n3_conclusion_result(G, O)])
+implied_by(n3_log_semanticsOrError(S, O), [is_nonvar(S), n3_document_error(S, E), unify(O, literal(E, datatype('${XSD}string')))])`, ['n3_conclusion_result']);
+def(`${LOG}parsedAsN3`, 'n3_log_parsedAsN3', `
+implied_by(n3_log_parsedAsN3(S, O), [is_nonvar(S), n3_parsed(S, G), n3_conclusion_result(G, O)])`, ['n3_conclusion_result']);
+def(`${LOG}content`, 'n3_log_content', `
+implied_by(n3_log_content(S, O), [is_nonvar(S), n3_content(S, T), n3_str_result(T, O)])`, ['n3_str_result']);
 
 // (F1 ... Fn) log:conjunction F: F holds the triples of every Fi, once each.
 def(`${LOG}conjunction`, 'n3_log_conjunction', `
@@ -466,11 +505,15 @@ implied_by(n3_conj_result(S, O), [is_nonvar(O), n3_triple_set(O, S)])`, ['n3_sor
 // log:
 // Formulas are equal when they hold the same triples, in any order.
 def(`${LOG}equalTo`, 'n3_log_equalTo', `
-implied_by(n3_log_equalTo(A, B), [n3_formulas(A, B, 'yes'), n3_triple_set(A, S), n3_triple_set(B, S)])
-implied_by(n3_log_equalTo(A, B), [n3_formulas(A, B, 'no'), unify(A, B)])`, ['n3_formulas']);
+implied_by(n3_log_equalTo(A, B), [n3_formulas(A, B, F), n3_equal(F, A, B)])
+implied_by(n3_equal('yes', A, B), n3_same_formula(A, B))
+implied_by(n3_equal('no', A, B), unify(A, B))`, ['n3_formulas']);
 def(`${LOG}notEqualTo`, 'n3_log_notEqualTo', `
-implied_by(n3_log_notEqualTo(A, B), [n3_formulas(A, B, 'yes'), n3_triple_set(A, S), n3_triple_set(B, T), not_identical(S, T)])
-implied_by(n3_log_notEqualTo(A, B), [n3_formulas(A, B, 'no'), not_unify(A, B)])`, ['n3_formulas']);
+implied_by(n3_log_notEqualTo(A, B), [n3_formulas(A, B, F), n3_not_equal(F, A, B)])
+// An empty collection rather than a negation, so a formula's own variables
+// need not be bound.
+implied_by(n3_not_equal('yes', A, B), findall('same', n3_same_formula(A, B), []))
+implied_by(n3_not_equal('no', A, B), not_unify(A, B))`, ['n3_formulas']);
 def(`${LOG}uri`, 'n3_log_uri', `
 implied_by(n3_log_uri(S, O), [is_nonvar(S), unify(S, iri(U)), n3_str_result(U, O)])
 implied_by(n3_log_uri(S, O), [is_var(S), n3_str(O, U), unify(S, iri(U))])`, ['n3_str', 'n3_str_result']);
@@ -503,14 +546,11 @@ def(`${LOG}langlit`, 'n3_log_langlit', `
 implied_by(n3_log_langlit([S, T], O), [is_nonvar(S), n3_str(S, A), n3_str(T, L), unify(O, literal(A, lang(L)))])
 implied_by(n3_log_langlit([S, T], O), [is_var(S), unify(O, literal(A, lang(L))), unify(S, literal(A, datatype('${XSD}string'))), unify(T, literal(L, datatype('${XSD}string')))])`, ['n3_str']);
 
-// Built-ins that need what eyemind deliberately leaves out: clocks, file and
-// network access, printing, and rules as data.
+// Built-ins that need what eyemind deliberately leaves out: clocks,
+// printing, and rules as data.
 export const UNSUPPORTED = new Map([
-  [`${LOG}semantics`, 'file and network access'],
-  [`${LOG}semanticsOrError`, 'file and network access'],
-  [`${LOG}content`, 'file and network access'],
   [`${LOG}trace`, 'printing while reasoning'],
   [`${LOG}implies`, 'matching rules as data'],
   [`${LOG}impliedBy`, 'matching rules as data'],
 ]);
-for (const name of ['localTime', 'gmTime', 'currentTime']) UNSUPPORTED.set(`http://www.w3.org/2000/10/swap/time#${name}`, 'a clock');
+for (const name of ['localTime', 'gmTime', 'currentTime']) UNSUPPORTED.set(`http://www.w3.org/2000/10/swap/time#${name}`, 'clock');

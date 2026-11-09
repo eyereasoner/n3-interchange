@@ -70,7 +70,7 @@ are ordinary derivations, so a proof cites them like any other.
 | `({ A } { B }) log:forAllIn ?S` | `not([A, not(B)])` |
 | `F1 log:includes F2`, formulas | `n3_includes(F1, F2)`, each triple of `F2` in `F1` |
 | `((L) P) list:map R` | `findall(Y, [n3_member(X, L), rdf(X, P, Y)], R)` |
-| `log:equalTo`, `log:notEqualTo` | `unify`, `not_unify` for a constant that is no formula; formulas as sets |
+| `log:equalTo`, `log:notEqualTo` | `unify`, `not_unify` for a constant that is no formula; formulas as sets, matched by unification |
 | `crypto:md5`, `sha`, `sha256`, `sha512` | eyemind's `digest` of the string's UTF-8 bytes, in hexadecimal |
 | `string:lowerCase`, `upperCase`, `…IgnoringCase` | eyemind's `atom_lower`, `atom_upper`: Unicode case conversion |
 | `L log:skolem I` | `https://eyereasoner.github.io/.well-known/genid/` and the SHA-256 of `term_text(L)` |
@@ -86,6 +86,30 @@ runs, such as `log:includes` with a literal object, compiles to `'fail'`.
 `log:equalTo` and `log:notEqualTo` compare two formulas as sets of triples,
 sorting each, and other terms by unification.
 
+A built-in whose arguments are all variables that no other goal of the
+premise mentions has nothing to compute; it holds without binding anything,
+as in N3 reasoners, and its variables stay universal in any rule the
+conclusion states. A rule is also stated as a triple, its variables quoted,
+when some rule's pattern has a variable predicate that could find it.
+
+`math:greaterThan` and the other comparisons also order `"INF"` and `"-INF"`
+as `xsd:float` or `xsd:double`: -INF before every number, INF after.
+
+### Documents
+
+eyemind reads nothing while it reasons, so the commands fetch the documents
+`log:semantics`, `log:semanticsOrError` and `log:content` read before
+compiling: `file:` IRIs from disk, `http:` and `https:` ones over the network.
+These are the IRIs written as the subject of one of those built-ins, and
+those the document's facts state at a place a rule's pattern finds the
+subject, as `:doc :source <...>` for `{ :doc :source ?d. ?d log:semantics ?f }`.
+The program states each one as facts: `n3_content(iri(U), Text)`,
+`n3_semantics(iri(U), Formula)` for text that parses as N3, and
+`n3_document_error(iri(U), Message)` otherwise, written as
+`error(dereference_failed,U)` or `error(parse_error,Message)`.
+`compileN3` and `reasonN3` take them as `documents`, which
+`fetchSourceDocuments` fetches.
+
 ### Lists written as triples
 
 A list can be written out as `rdf:first` and `rdf:rest` triples from a blank
@@ -95,7 +119,7 @@ A built-in reads both as a list: before it, each `?variable` or blank node
 argument, and each such item of a written list, passes through
 `n3_as_list(T, L)`, which follows the description, nested descriptions too,
 and passes anything else on unchanged. Only a document that mentions
-`rdf:first` or `rdf:rest` gets these steps, since only it can write a list
+`rdf:first`, `rdf:rest` or `rdf:nil` gets these steps, since only it can write a list
 out, and they are left out inside a negation or collection, where reading
 `rdf:first` triples would make the rule depend on every rule that concludes
 them.

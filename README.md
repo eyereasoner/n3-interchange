@@ -128,8 +128,8 @@ the notation3tests suite as eyeling mirrors it:
 
 | Corpus | Result |
 | --- | --- |
-| eyeling examples with an expected output | 169 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
-| notation3tests | 1072 of 1163 |
+| eyeling examples with an expected output | 172 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
+| notation3tests | 1139 of 1163 |
 
 ```sh
 node tools/corpus.mjs ../eyeling/examples
@@ -142,7 +142,6 @@ built-in and the reason:
 
 | Built-ins | eyemind has no |
 | --- | --- |
-| `log:semantics`, `semanticsOrError`, `content` | file or network access |
 | `log:implies`, `log:impliedBy` in a premise | matching rules as data |
 | `log:trace` | printing while reasoning |
 | `time:localTime`, `gmTime`, `currentTime` | clock |
@@ -161,18 +160,25 @@ Other limits:
   a naive Fibonacci exhaust memory.
 - A rule whose conclusion is a variable, `{ ... } => ?F`, is read as a
   triple, not as a rule.
-- `log:conclusion` knows the closure of each formula the document states,
-  worked out while compiling; a formula only built while reasoning has none,
-  and the goal fails. `log:parsedAsN3` parses a string written in the rule
-  while compiling; a string only known while reasoning gives no formula.
+- eyemind reads no files and no network while it reasons, so the documents
+  `log:semantics`, `log:semanticsOrError` and `log:content` read are fetched
+  before compiling: each IRI written as their subject, and each IRI the
+  document's facts state where a rule's pattern finds that subject. Another
+  IRI has no document, and the goal fails.
+- `log:conclusion` knows the closure of each formula the document states or
+  fetches, worked out while compiling, and `log:parsedAsN3` each string the
+  document states or a rule writes, parsed while compiling; a formula or
+  string only built while reasoning has none, and the goal fails.
 - Quoted formulas match as ordered lists of triples, not as sets;
-  `log:equalTo` and `log:notEqualTo` compare them as sets, but not up to
-  renaming blank nodes.
+  `log:equalTo` and `log:notEqualTo` compare them as sets, matching blank
+  nodes and variables by unification.
 - `log:collectAllIn` and `log:forAllIn` need their formulas written in the
   rule; one only known when the rule runs makes the goal fail.
-- Decimals and doubles are both binary64 floats, and `xsd:float` is one too.
-- Built-ins called with every argument unbound fail, and `INF` and `NaN`
-  are not numbers.
+- Decimals and doubles are both binary64 floats, and `xsd:float` is one too,
+  so `0.1 + 0.2` is not `0.3` and `"42"^^xsd:float` equals `42.0`. `INF` and
+  `-INF` compare as infinities; `NaN` is no number.
+- A regular expression only known while reasoning is used as it is, so it
+  must be an ECMAScript pattern valid in Unicode mode.
 
 ## JavaScript API
 
@@ -186,9 +192,12 @@ const text = eyemindToN3(conclusions, { prefixes }); // conclusions as N3
 
 `reasonN3(sources, options)` takes the text, or `[text, name]` pairs, and the
 options `mode` (`'new'` or `'all'`), `strings` (`'auto'`, `true`, `false`),
-`base`, `limits` (`maxInferences`, `maxDepth`, `maxIterations`) and `proof`.
-It returns `n3`, the `triples`, `contradiction`, the compiled `program` and
-eyemind's `result`, whose `proof` `checkProof` from eyemind checks.
+`base`, `limits` (`maxInferences`, `maxDepth`, `maxIterations`), `proof`,
+`goals` and `documents`. It returns `n3`, the `triples`, `contradiction`, the
+compiled `program` and eyemind's `result`, whose `proof` `checkProof` from
+eyemind checks. `await fetchSourceDocuments(sources)` fetches the documents
+the sources read with `log:semantics` and `log:content`, for `documents`;
+without them those built-ins find nothing.
 
 ## Tests
 

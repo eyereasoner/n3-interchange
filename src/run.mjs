@@ -4,13 +4,30 @@ import { parseN3 } from './n3-parser.mjs';
 import { compileN3Document } from './n3-to-eyemind.mjs';
 import { triplesFromEyemind, tripleToEyemind, writeN3 } from './eyemind-to-n3.mjs';
 import { LOG } from './n3-parser.mjs';
+import { documentIris, fetchDocuments } from './documents.mjs';
 
 // Generous bounds: N3 programs often run longer than eyemind's defaults.
 export const DEFAULT_LIMITS = { maxDepth: 1000000, maxIterations: 100000, maxInferences: 1000000000 };
 
 // N3 sources, given as [text, name] pairs, read as one document and
-// compiled: { doc, program }, the program as eyemind text.
-export function compileSources(sources, { base = '' } = {}) {
+// compiled: { doc, program }, the program as eyemind text. documents holds
+// what fetchSourceDocuments fetched.
+export function compileSources(sources, { base = '', documents } = {}) {
+  const doc = readSources(sources, { base });
+  const { program } = compileN3Document(doc, { source: sourceNames(sources), documents });
+  return { doc, program };
+}
+
+const sourceNames = (sources) => (typeof sources === 'string' ? 'input' : sources.map(([, name]) => name).join(', '));
+
+// The documents the sources name for log:semantics, log:semanticsOrError
+// and log:content, fetched: pass them to compileSources or reasonN3.
+export function fetchSourceDocuments(sources, { base = '', timeout } = {}) {
+  return fetchDocuments(documentIris(readSources(sources, { base }).triples), { timeout });
+}
+
+// N3 sources read as one document.
+export function readSources(sources, { base = '' } = {}) {
   if (typeof sources === 'string') sources = [[sources, 'input']];
   const docs = sources.map(([text, name]) => parseN3(text, { base: base || fileBase(name) }));
   // Blank-node labels are local to each source.
@@ -19,8 +36,7 @@ export function compileSources(sources, { base = '' } = {}) {
     doc.triples.push(...(docs.length > 1 ? relabel(d.triples, `s${k}.`) : d.triples));
     for (const [name, ns] of d.prefixes) if (!doc.prefixes.has(name)) doc.prefixes.set(name, ns);
   });
-  const { program } = compileN3Document(doc, { source: sources.map(([, name]) => name).join(', ') });
-  return { doc, program };
+  return doc;
 }
 
 // The triples of eyemind answers as N3: the derived ones, every triple with
@@ -37,8 +53,8 @@ export function answersToN3(doc, answers, { mode = 'new', strings = 'auto' } = {
 // Reason over N3 sources. Returns { n3, triples, contradiction, program,
 // result }; with proof, result.proof is eyemind's checked proof of the
 // compiled program.
-export function reasonN3(sources, { base = '', mode = 'new', strings = 'auto', limits = {}, proof = false, goals = [] } = {}) {
-  const { doc, program } = compileSources(sources, { base });
+export function reasonN3(sources, { base = '', mode = 'new', strings = 'auto', limits = {}, proof = false, goals = [], documents } = {}) {
+  const { doc, program } = compileSources(sources, { base, documents });
   const result = run(loadText(program, 'compiled.js'), { ...DEFAULT_LIMITS, ...limits, proof, goals });
   return { ...answersToN3(doc, result.answers, { mode, strings }), program, result };
 }
