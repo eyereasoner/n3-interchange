@@ -75,6 +75,23 @@ are ordinary derivations, so a proof cites them like any other.
 | `(S P R) string:replace U` | `regex_replace(P, S, R, U)`, every match replaced |
 | `(S P) string:scrape G` | the first group of the first match, `once(regex_find(P, S, [_, G, ..._]))` |
 
+A built-in whose formula is neither written in the rule nor bound when it
+runs, such as `log:includes` with a literal object, compiles to `'fail'`.
+`log:equalTo` and `log:notEqualTo` compare two formulas as sets of triples,
+sorting each, and other terms by unification.
+
+### Lists written as triples
+
+A list can be written out as `rdf:first` and `rdf:rest` triples from a blank
+node, ending in `rdf:nil`. Such a description is a different term from the
+collection `( ... )`, so a triple pattern does not match one with the other.
+A built-in reads both as a list: before it, each `?variable` or blank node
+argument, and each such item of a written list, passes through
+`n3_as_list(T, L)`, which follows the description, nested descriptions too,
+and passes anything else on unchanged. Inside a negation or collection the
+step is left out, since reading `rdf:first` triples there would make the rule
+depend on every rule that concludes them.
+
 A scope is the subject of `log:includes` or `log:notIncludes`, or the object
 of `log:collectAllIn` or `log:forAllIn`. A variable that appears nowhere else
 in the rule, or a constant such as `1`, means the whole store.

@@ -52,7 +52,12 @@ function decodeEscapes(text, line) {
       const n = e === 'u' ? 4 : 8;
       const hex = text.slice(i + 1, i + 1 + n);
       if (!new RegExp(`^[0-9A-Fa-f]{${n}}$`).test(hex)) throw new N3SyntaxError(`bad \\${e} escape`, line);
-      out += String.fromCodePoint(parseInt(hex, 16));
+      const code = parseInt(hex, 16);
+      // Escapes name characters: not U+0000, a surrogate or a noncharacter.
+      if (code === 0 || (code >= 0xd800 && code <= 0xdfff) || (code & 0xfffe) === 0xfffe || code > 0x10ffff) {
+        throw new N3SyntaxError(`\\${e}${hex} does not name a character a document may hold`, line);
+      }
+      out += String.fromCodePoint(code);
       i += n;
     } else throw new N3SyntaxError(`unknown string escape \\${e}`, line);
   }
@@ -83,7 +88,10 @@ export function tokenize(src) {
       if (end < 0) throw new N3SyntaxError('unterminated IRI', line);
       const raw = src.slice(i + 1, end);
       if (/[\s<"{}|^`]/.test(raw)) throw new N3SyntaxError(`invalid character in IRI <${raw}>`, line);
-      push('iri', decodeEscapes(raw, line));
+      const decoded = decodeEscapes(raw, line);
+      // An escape may not bring in what the IRI could not hold as written.
+      if (/[\u0000-\u0020<>"{}|^`\\]/.test(decoded)) throw new N3SyntaxError(`invalid character in IRI <${raw}>`, line);
+      push('iri', decoded);
       i = end + 1;
       continue;
     }
@@ -114,7 +122,7 @@ export function tokenize(src) {
       const word = m[1];
       const prev = toks[toks.length - 1];
       if (['prefix', 'base', 'version', 'keywords', 'forAll', 'forSome'].includes(word) && !(prev && prev.k === 'string')) push('word', `@${word}`);
-      else if (word === 'a' || word === 'is' || word === 'of' || word === 'has') push('word', word);
+      else if (['a', 'is', 'of', 'has'].includes(word) && !(prev && prev.k === 'string')) push('word', word);
       else push('lang', word);
       i += m[0].length;
       continue;
@@ -263,7 +271,7 @@ export function parseN3(src, { base = '' } = {}) {
     const word = tok.v.replace(/^@/, '').toLowerCase();
     if (word === 'prefix') {
       const p = next();
-      if (p.k !== 'pname' || !p.v.endsWith(':') || p.v.indexOf(':') !== p.v.length - 1) throw fail('expected a prefix name such as ex:', p);
+      if (p.k !== 'pname' || !p.v.endsWith(':') || p.v.indexOf(':') !== p.v.length - 1 || p.v.endsWith('.:')) throw fail('expected a prefix name such as ex:, not ending in a dot', p);
       const i = next();
       if (i.k !== 'iri') throw fail('expected an IRI for the prefix', i);
       prefixes.set(p.v.slice(0, -1), resolveIri(i.v, base));
@@ -325,7 +333,12 @@ export function parseN3(src, { base = '' } = {}) {
       return { t: 'triple', s, p: p.p, o };
     }
     if (isP('[', tok)) {
-      const b = freshBnode();
+      // [ id :x :p :o ] describes :x itself.
+      let b;
+      if (peek().k === 'word' && peek().v === 'id') {
+        next();
+        b = pathTerm();
+      } else b = freshBnode();
       if (!isP(']')) predicateObjectList(b);
       expectP(']');
       return b;
@@ -344,7 +357,7 @@ export function parseN3(src, { base = '' } = {}) {
       scope = { id: ++scopeCount, triples: [] };
       while (!isP('}')) {
         if (peek().k === 'eof') throw fail("unterminated formula; expected '}'");
-        statement(true);
+        if (statement(true) === 'directive') continue;
         if (isP('.')) next();
         else if (!isP('}')) throw fail(`expected '.' or '}', found ${describe(peek())}`);
       }
@@ -409,7 +422,6 @@ export function parseN3(src, { base = '' } = {}) {
   function statement(inFormula) {
     const tok = peek();
     if (tok.k === 'word' && /^(@prefix|@base|prefix|base|version)$/i.test(tok.v)) {
-      if (inFormula && tok.v.startsWith('@')) throw fail(`${tok.v} inside a formula`, tok);
       directive();
       return 'directive';
     }

@@ -106,6 +106,13 @@ implied_by(n3_member(X, [_, ...T]), n3_member(X, T))`,
 fact(n3_length([], 0))
 implied_by(n3_length([_, ...T], N), [n3_length(T, M), is(N, add(M, 1))])`,
   },
+  n3_formulas: {
+    needs: ['n3_sort'],
+    text: `
+// n3_formulas(A, B, F): F is yes when A and B are both formulas.
+implied_by(n3_formulas(A, B, F), once(or(and(is_nonvar(A), is_nonvar(B), unify(A, graph(_)), unify(B, graph(_)), unify(F, 'yes')), unify(F, 'no'))))
+implied_by(n3_triple_set(graph(Ts), S), n3_sort(Ts, S))`,
+  },
   n3_member_at: {
     needs: ['n3_result'],
     text: `
@@ -113,11 +120,31 @@ implied_by(n3_length([_, ...T], N), [n3_length(T, M), is(N, add(M, 1))])`,
 implied_by(n3_member_at([X, ..._], K, I, X), n3_result(K, I))
 implied_by(n3_member_at([_, ...R], K, I, X), [is(K1, add(K, 1)), n3_member_at(R, K1, I, X)])`,
   },
+  n3_as_list: {
+    needs: ['n3_member'],
+    text: `
+// n3_as_list(T, L): a collection written as rdf:first and rdf:rest triples
+// from a blank node is read as the list L; any other T is L itself.
+implied_by(n3_as_list(T, L), [once(n3_list_view(T, K)), n3_as_list_(K, T, L)])
+implied_by(n3_list_view(T, 'as_is'), is_var(T))
+implied_by(n3_list_view(bnode(_, _), 'described'), 'true')
+implied_by(n3_list_view(skolem(_, _, _), 'described'), 'true')
+implied_by(n3_list_view(_, 'as_is'), 'true')
+implied_by(n3_as_list_('as_is', T, T), 'true')
+implied_by(n3_as_list_('described', T, L), once(or(n3_described(T, [], L), unify(L, T))))
+// Seen holds the nodes already read, so a cycle is no list.
+implied_by(n3_described(iri('${RDF}nil'), _, []), 'true')
+implied_by(n3_described(T, Seen, [X, ...R]), [not(n3_member(T, Seen)), rdf(T, iri('${RDF}first'), Y), n3_as_list(Y, X), rdf(T, iri('${RDF}rest'), N), n3_described(N, [T, ...Seen], R)])`,
+  },
   n3_includes: {
     needs: ['n3_member'],
     text: `
 // n3_includes(G, F): every triple of the formula F is a triple of the formula G.
-implied_by(n3_includes(graph(Ts), graph(Ps)), n3_all_members(Ps, Ts))
+implied_by(n3_includes(G, F), [is_nonvar(G), is_nonvar(F), n3_includes_(G, F)])
+// Negated here, with both formulas known, so the negation has no variable
+// to bind.
+implied_by(n3_not_includes(G, F), [is_nonvar(G), is_nonvar(F), not(n3_includes_(G, F))])
+implied_by(n3_includes_(graph(Ts), graph(Ps)), n3_all_members(Ps, Ts))
 fact(n3_all_members([], _))
 implied_by(n3_all_members([P, ...Ps], Ts), [n3_member(P, Ts), n3_all_members(Ps, Ts)])`,
   },
@@ -148,10 +175,12 @@ implied_by(n3_merge_('<', X, R, Y, T, [X, ...S]), n3_merge(R, [Y, ...T], S))
 implied_by(n3_merge_('=', X, R, _, T, [X, ...S]), n3_merge(R, T, S))
 implied_by(n3_merge_('>', X, R, Y, T, [Y, ...S]), n3_merge([X, ...R], T, S))
 // Numbers compare by value, other terms by the standard order.
-implied_by(n3_cmp(O, X, Y), [is_number(X), is_number(Y), lt(X, Y), unify(O, '<')])
-implied_by(n3_cmp(O, X, Y), [is_number(X), is_number(Y), gt(X, Y), unify(O, '>')])
-implied_by(n3_cmp(O, X, Y), [is_number(X), is_number(Y), eq(X, Y), compare(O, X, Y)])
-implied_by(n3_cmp(O, X, Y), [not(and(is_number(X), is_number(Y))), compare(O, X, Y)])`,
+implied_by(n3_cmp(O, X, Y), [n3_numbers(X, Y, F), n3_cmp_(F, O, X, Y)])
+implied_by(n3_numbers(X, Y, F), once(or(and(is_number(X), is_number(Y), unify(F, 'yes')), unify(F, 'no'))))
+implied_by(n3_cmp_('yes', O, X, Y), [lt(X, Y), unify(O, '<')])
+implied_by(n3_cmp_('yes', O, X, Y), [gt(X, Y), unify(O, '>')])
+implied_by(n3_cmp_('yes', O, X, Y), [eq(X, Y), compare(O, X, Y)])
+implied_by(n3_cmp_('no', O, X, Y), compare(O, X, Y))`,
   },
   n3_digits: {
     text: `
@@ -264,7 +293,8 @@ for (const [name, expr, inverse] of [
   ['negation', 'neg(X)', 'neg(Y)'], ['absoluteValue', 'abs(X)'], ['floor', 'floor(X)'], ['ceiling', 'ceil(X)'],
   ['sin', 'sin(X)', 'asin(Y)'], ['cos', 'cos(X)', 'acos(Y)'], ['tan', 'tan(X)', 'atan(Y)'],
   ['asin', 'asin(X)', 'sin(Y)'], ['acos', 'acos(X)', 'cos(Y)'], ['atan', 'atan(X)', 'tan(Y)'],
-  ['sinh', 'sinh(X)'], ['cosh', 'cosh(X)'], ['tanh', 'tanh(X)'],
+  ['sinh', 'sinh(X)', 'log(add(Y, sqrt(add(mul(Y, Y), 1))))'], ['cosh', 'cosh(X)', 'log(add(Y, sqrt(sub(mul(Y, Y), 1))))'],
+  ['tanh', 'tanh(X)', 'mul(float(0.5), log(div(add(1, Y), sub(1, Y))))'],
   ['degrees', 'degrees(X)', 'radians(Y)'], ['radians', 'radians(X)', 'degrees(Y)'],
   ['sqrt', 'sqrt(X)'], ['exp', 'exp(X)'], ['ln', 'log(X)'],
 ]) {
@@ -340,14 +370,15 @@ implied_by(n3_string_format([F, ...Args], O), [n3_str(F, A), atom_chars(A, Cs), 
 
 // list:
 def(`${LIST}first`, 'n3_list_first', `
-implied_by(n3_list_first([X, ..._], X), 'true')`);
+implied_by(n3_list_first(L, X), [is_nonvar(L), unify(L, [X, ..._])])`);
 def(`${LIST}rest`, 'n3_list_rest', `
-implied_by(n3_list_rest([_, ...R], R), 'true')`);
+implied_by(n3_list_rest(L, R), [is_nonvar(L), unify(L, [_, ...R])])`);
 def(`${LIST}firstRest`, 'n3_list_firstRest', `
 implied_by(n3_list_firstRest([X, ...R], [X, R]), 'true')`);
 def(`${LIST}last`, 'n3_list_last', `
-implied_by(n3_list_last([X], X), 'true')
-implied_by(n3_list_last([_, Y, ...R], X), n3_list_last([Y, ...R], X))`);
+implied_by(n3_list_last(L, X), [is_nonvar(L), n3_last(L, X)])
+implied_by(n3_last([X], X), 'true')
+implied_by(n3_last([_, Y, ...R], X), n3_last([Y, ...R], X))`);
 def(`${LIST}length`, 'n3_list_length', `
 implied_by(n3_list_length(L, O), [is_nonvar(L), n3_length(L, N), n3_result(N, O)])`, ['n3_length', 'n3_result']);
 def(`${LIST}member`, 'n3_list_member', `
@@ -359,7 +390,7 @@ implied_by(n3_list_notMember(L, X), not(n3_member(X, L)))`, ['n3_member']);
 def(`${LIST}append`, 'n3_list_append', `
 // (L1 ... Ln) list:append L; with L given and two lists, every split.
 implied_by(n3_list_append(Ls, L), [is_ground(Ls), n3_appends(Ls, L)])
-implied_by(n3_list_append([A, B], L), [n3_ground_flag([A, B], 'no'), is_nonvar(L), n3_append(A, B, L)])
+implied_by(n3_list_append(Ls, L), [is_nonvar(Ls), unify(Ls, [A, B]), n3_ground_flag([A, B], 'no'), is_nonvar(L), n3_append(A, B, L)])
 // n3_ground_flag(T, F): F is yes or no as T is ground, decided without
 // negation, which needs bound variables.
 implied_by(n3_ground_flag(T, F), once(or(and(is_ground(T), unify(F, 'yes')), unify(F, 'no'))))
@@ -373,7 +404,7 @@ def(`${LIST}iterate`, 'n3_list_iterate', `
 implied_by(n3_list_iterate(L, [I, X]), [is_nonvar(L), n3_member_at(L, 0, I, X)])`, ['n3_member_at']);
 def(`${LIST}remove`, 'n3_list_remove', `
 // (L X) list:remove R: R is L without any element equal to X.
-implied_by(n3_list_remove([L, X], R), n3_remove(L, X, R))
+implied_by(n3_list_remove([L, X], R), [is_ground(L), n3_remove(L, X, R)])
 fact(n3_remove([], _, []))
 implied_by(n3_remove([Y, ...T], X, R), [unify(X, Y), n3_remove(T, X, R)])
 implied_by(n3_remove([Y, ...T], X, [Y, ...R]), [not_unify(X, Y), n3_remove(T, X, R)])`);
@@ -410,8 +441,13 @@ implied_by(n3_zone(['.', ...R], Z), [n3_digit_prefix(R, _, Rest), n3_zone(Rest, 
 implied_by(n3_zone([C, ...R], [C, ...R]), not_identical(C, '.'))`, ['n3_str', 'n3_str_result', 'n3_digits', 'n3_format']);
 
 // log:
-def(`${LOG}equalTo`, 'unify');
-def(`${LOG}notEqualTo`, 'not_unify');
+// Formulas are equal when they hold the same triples, in any order.
+def(`${LOG}equalTo`, 'n3_log_equalTo', `
+implied_by(n3_log_equalTo(A, B), [n3_formulas(A, B, 'yes'), n3_triple_set(A, S), n3_triple_set(B, S)])
+implied_by(n3_log_equalTo(A, B), [n3_formulas(A, B, 'no'), unify(A, B)])`, ['n3_formulas']);
+def(`${LOG}notEqualTo`, 'n3_log_notEqualTo', `
+implied_by(n3_log_notEqualTo(A, B), [n3_formulas(A, B, 'yes'), n3_triple_set(A, S), n3_triple_set(B, T), not_identical(S, T)])
+implied_by(n3_log_notEqualTo(A, B), [n3_formulas(A, B, 'no'), not_unify(A, B)])`, ['n3_formulas']);
 def(`${LOG}uri`, 'n3_log_uri', `
 implied_by(n3_log_uri(S, O), [is_nonvar(S), unify(S, iri(U)), n3_str_result(U, O)])
 implied_by(n3_log_uri(S, O), [is_var(S), n3_str(O, U), unify(S, iri(U))])`, ['n3_str', 'n3_str_result']);
@@ -429,8 +465,13 @@ def(`${LOG}dtlit`, 'n3_log_dtlit', `
 // (Lexical Datatype) log:dtlit Literal.
 implied_by(n3_log_dtlit([S, iri(D)], O), [is_nonvar(S), n3_str(S, A), n3_typed(A, D, O)])
 implied_by(n3_log_dtlit([L, D], O), [is_nonvar(O), n3_lit_parts(O, A, U), unify(L, literal(A, datatype('${XSD}string'))), unify(D, iri(U))])
-implied_by(n3_typed(A, '${XSD}integer', N), [atom_chars(A, Cs), number_chars(N, Cs), is_int(N)])
-implied_by(n3_typed(A, D, literal(A, datatype(D))), not(and(unify(D, '${XSD}integer'), atom_chars(A, _1), number_chars(_2, _1), is_int(_2))))
+// xsd:integer, xsd:decimal and xsd:double with a valid lexical form are
+// numbers, as when they are read.
+implied_by(n3_typed(A, D, N), [n3_number_type(D, K), atom_chars(A, Cs), number_chars(N, Cs), n3_number_kind(N, K)])
+implied_by(n3_typed(A, D, literal(A, datatype(D))), not(and(n3_number_type(D, _1), atom_chars(A, _2), number_chars(_3, _2), n3_number_kind(_3, _1))))
+fact(n3_number_type('${XSD}integer', 'int'), n3_number_type('${XSD}decimal', 'float'), n3_number_type('${XSD}double', 'float'))
+implied_by(n3_number_kind(N, 'int'), is_int(N))
+implied_by(n3_number_kind(N, 'float'), is_number(N))
 implied_by(n3_lit_parts(literal(A, datatype(U)), A, U), 'true')
 implied_by(n3_lit_parts(N, A, '${XSD}integer'), [is_int(N), number_chars(N, Cs), atom_chars(A, Cs)])
 implied_by(n3_lit_parts(N, A, '${XSD}decimal'), [is_float(N), number_chars(N, Cs), atom_chars(A, Cs)])`, ['n3_str']);

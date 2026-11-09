@@ -59,7 +59,7 @@ test('compiler: an unsupported built-in is an error that says why', () => {
 });
 test('compiler: a constant pattern drops escapes Unicode mode forbids', () => {
   const { program } = compileN3(`${P}{ ?s :p ?t. ?t string:matches "a\\\\:b\\\\.c" } => { ?s :ok true }.`);
-  assert.match(program, /n3_string_matches\(T, literal\("a:b\\\\.c"/);
+  assert.match(program, /n3_string_matches\([^,]+, literal\("a:b\\\\.c"/);
   const braces = compileN3(`${P}{ ?s :p ?t. ?t string:matches "{{x}}\\\\p{L}{2}" } => { ?s :ok true }.`).program;
   assert.match(braces, /literal\("\\\\{\\\\{x\\\\}\\\\}\\\\p\{L\}\{2\}"/);
 });
@@ -170,6 +170,32 @@ test('n3-to-eyemind | eyemind | eyemind-to-n3', () => {
   writeFileSync(join(dir, 'conclusions.js'), run.stdout);
   const back = node([join(root, 'bin/eyemind-to-n3.js'), '--prefixes', input, join(dir, 'conclusions.js')]);
   assert.equal(back.stdout, readFileSync(join(root, 'examples/output/invoice.n3'), 'utf8'));
+});
+test('eyemind-n3 takes the eyemind options', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'n3-interchange-'));
+  const bin = join(root, 'bin/eyemind-n3.js');
+  const cli = (...args) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8' });
+  const socrates = join(root, 'examples/socrates.n3');
+  // A proof of the compiled program, checked on its own and again from a file.
+  const proof = cli('--proof', socrates);
+  assert.equal(proof.status, 0, proof.stderr);
+  assert.match(proof.stdout, /^step\(rdf\(iri\('http:\/\/example.org\/socrates#Socrates'\)/m);
+  writeFileSync(join(dir, 'proof.js'), proof.stdout);
+  const checked = cli('--check-proof', join(dir, 'proof.js'), socrates);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stdout, /^verdict\('checked'\)$/m);
+  writeFileSync(join(dir, 'forged.js'), proof.stdout.replace(/clause\(1\), \{/, 'clause(2), {'));
+  assert.equal(cli('--check-proof', join(dir, 'forged.js'), socrates).status, 2);
+  const json = JSON.parse(cli('-c', '--json', socrates).stdout);
+  assert.equal(json.valid, true);
+  // A goal over the compiled program; triples come back as N3.
+  const goal = cli('--goal', "rdf(S, iri('http://example.org/family#ancestor'), O)", join(root, 'examples/family.n3'));
+  assert.match(goal.stdout, /:bob :ancestor :dan \./);
+  assert.match(cli('--stats', socrates).stderr, /"inferences":/);
+  assert.equal(cli('-p', join(root, 'examples/fuse.n3')).status, 65);
+  assert.match(cli('-v').stdout, /^n3-interchange v\d+\.\d+\.\d+, eyemind v\d+\.\d+\.\d+$/m);
+  assert.match(cli('--json', socrates).stderr, /--json requires --check-proof or --prove-and-check/);
+  assert.match(cli('--max-depth', '0', socrates).stderr, /--max-depth needs a positive integer/);
 });
 test('eyemind-to-n3 reads conclusions without running them', () => {
   assert.equal(eyemindToN3("rdf(iri('http://e/a'), iri('http://e/p'), literal('x', lang('en')))\n"), '<http://e/a> <http://e/p> "x"@en .\n');

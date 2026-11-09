@@ -8,9 +8,9 @@ import { LOG } from './n3-parser.mjs';
 // Generous bounds: N3 programs often run longer than eyemind's defaults.
 export const DEFAULT_LIMITS = { maxDepth: 1000000, maxIterations: 100000, maxInferences: 1000000000 };
 
-// Reason over N3 sources, given as [text, name] pairs and read as one
-// document. Returns { n3, triples, contradiction, program, result }.
-export function reasonN3(sources, { base = '', mode = 'new', strings = 'auto', limits = {}, proof = false } = {}) {
+// N3 sources, given as [text, name] pairs, read as one document and
+// compiled: { doc, program }, the program as eyemind text.
+export function compileSources(sources, { base = '' } = {}) {
   if (typeof sources === 'string') sources = [[sources, 'input']];
   const docs = sources.map(([text, name]) => parseN3(text, { base: base || fileBase(name) }));
   // Blank-node labels are local to each source.
@@ -20,13 +20,27 @@ export function reasonN3(sources, { base = '', mode = 'new', strings = 'auto', l
     for (const [name, ns] of d.prefixes) if (!doc.prefixes.has(name)) doc.prefixes.set(name, ns);
   });
   const { program } = compileN3Document(doc, { source: sources.map(([, name]) => name).join(', ') });
-  const result = run(loadText(program, 'compiled.js'), { ...DEFAULT_LIMITS, ...limits, proof });
-  let { triples, contradiction } = triplesFromEyemind(result.answers.join('\n'));
+  return { doc, program };
+}
+
+// The triples of eyemind answers as N3: the derived ones, every triple with
+// mode 'all', and the document's own log:outputString strings when the
+// result writes strings.
+export function answersToN3(doc, answers, { mode = 'new', strings = 'auto' } = {}) {
+  let { triples, contradiction } = triplesFromEyemind(answers.join('\n'));
   const given = doc.triples.filter((x) => !isRule(x)).map(tripleToEyemind);
   if (mode === 'all') triples = [...given, ...triples];
-  // Strings the document states are part of the report too.
   else if (strings !== false && triples.some(isOutputString)) triples = [...given.filter(isOutputString), ...triples];
-  return { n3: writeN3(triples, { prefixes: doc.prefixes, strings }), triples, contradiction, program, result };
+  return { n3: writeN3(triples, { prefixes: doc.prefixes, strings }), triples, contradiction };
+}
+
+// Reason over N3 sources. Returns { n3, triples, contradiction, program,
+// result }; with proof, result.proof is eyemind's checked proof of the
+// compiled program.
+export function reasonN3(sources, { base = '', mode = 'new', strings = 'auto', limits = {}, proof = false, goals = [] } = {}) {
+  const { doc, program } = compileSources(sources, { base });
+  const result = run(loadText(program, 'compiled.js'), { ...DEFAULT_LIMITS, ...limits, proof, goals });
+  return { ...answersToN3(doc, result.answers, { mode, strings }), program, result };
 }
 
 const RULES = new Set([`${LOG}implies`, `${LOG}impliedBy`, `${LOG}query`]);

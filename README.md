@@ -53,17 +53,45 @@ holds `log:outputString` triples it writes their strings, ordered by subject.
 An inference fuse, `{ ... } => false`, stops the run with exit status 2.
 
 ```text
-eyemind-n3 [options] input.n3 ...
-      --all             write every triple, not only derived ones
-      --strings         write log:outputString values as text
-      --triples         write triples even when there are log:outputString values
-      --program         write the compiled eyemind program instead
-      --base IRI        base IRI for relative references
-      --max-inferences N, --max-depth N, --max-iterations N   reasoning bounds
-  -o FILE               output file
+eyemind-n3 [OPTION ...] input.n3 ...
+N3 options:
+      --all               Write every triple, not only derived ones
+      --strings           Write log:outputString values as text
+      --triples           Write triples even when there are log:outputString values
+      --program           Write the compiled eyemind program instead
+      --base IRI          Base IRI for relative references
+  -o FILE                 Write the output to FILE
+eyemind options:
+  -p, --proof             Print eyemind's proof of the conclusions
+  -c, --prove-and-check   Generate a proof and check it against the compiled program
+      --check-proof FILE  Check a proof of the compiled program (- for stdin)
+      --json              Print the check report as JSON instead
+      --goal GOAL         Ask an eyemind goal after forward reasoning
+      --strict-proof      Reject proofs with unresolved obligations
+      --unused            List the compiled clauses that make no difference
+      --stats             Print reasoning statistics to stderr
+      --max-depth N       Bound backward recursion (default 1000000)
+      --max-iterations N  Bound forward rounds per stratum (default 100000)
+      --max-inferences N  Bound reasoning work (default 1000000000)
+  -v, --version           Print the versions of n3-interchange and eyemind
+  -h, --help              Print this help
 ```
 
 Several inputs are read as one document; blank-node labels stay local to each.
+
+The eyemind options mean what they mean for `eyemind`, applied to the
+compiled program. Compiling is deterministic, so a proof saved with
+`--proof` checks later against the same N3 input:
+
+```sh
+eyemind-n3 --proof examples/invoice.n3 > invoice-proof.js
+eyemind-n3 --check-proof invoice-proof.js examples/invoice.n3
+eyemind-n3 --goal "rdf(S, iri('http://example.org/family#ancestor'), O)" examples/family.n3
+```
+
+A goal's answers are written as N3 when they are triples, and as eyemind
+terms otherwise. With `--proof` or `--prove-and-check` the exit codes are
+eyemind's: 2 for an invalid proof and 65 for a fuse that fired.
 
 ## The three steps
 
@@ -101,7 +129,7 @@ the notation3tests suite as eyeling mirrors it:
 | Corpus | Result |
 | --- | --- |
 | eyeling examples with an expected output | 159 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
-| notation3tests | 893 of 1163 |
+| notation3tests | 1031 of 1163 |
 
 ```sh
 node tools/corpus.mjs ../eyeling/examples
@@ -130,8 +158,14 @@ Other limits:
   a naive Fibonacci exhaust memory.
 - A rule whose conclusion is a variable, `{ ... } => ?F`, is read as a
   triple, not as a rule.
-- Quoted formulas match as ordered lists of triples, not as sets.
-- Decimals and doubles are both binary64 floats.
+- Quoted formulas match as ordered lists of triples, not as sets;
+  `log:equalTo` and `log:notEqualTo` compare them as sets, but not up to
+  renaming blank nodes.
+- `log:collectAllIn` and `log:forAllIn` need their formulas written in the
+  rule; one only known when the rule runs makes the goal fail.
+- Decimals and doubles are both binary64 floats, and `xsd:float` is one too.
+- Built-ins called with every argument unbound fail, case-insensitive string
+  built-ins fold only ASCII letters, and `INF` and `NaN` are not numbers.
 
 ## JavaScript API
 

@@ -155,6 +155,7 @@ class Writer {
   }
 
   literal(text, annotation) {
+    if (typeof text !== 'string') throw new N3WriteError(`a literal's text must be an atom, not ${write(text)}`);
     const lex = quoteString(text);
     if (annotation instanceof Struct && annotation.name === 'lang') {
       const [lang, dir] = annotation.args;

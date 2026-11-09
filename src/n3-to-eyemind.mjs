@@ -215,6 +215,8 @@ function withPattern(x, where) {
 }
 
 const SCOPED_SUBJECT = new Set([`${LOG}includes`, `${LOG}notIncludes`]);
+const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+const LIST_TRIPLES = new Set([`${RDF_NS}first`, `${RDF_NS}rest`]);
 const SCOPED_OBJECT = new Set([`${LOG}collectAllIn`, `${LOG}forAllIn`]);
 
 function compileRule(body, head, kind, needed) {
@@ -231,6 +233,9 @@ function compileRule(body, head, kind, needed) {
     return keys;
   };
   const goals = (triples, negated) => triples.flatMap((x) => goal(x, negated));
+  // How many negations or collections the goal being compiled is inside.
+  let closed = 0;
+  let listViews = 0;
   const conj = (gs) => (gs.length === 0 ? "'true'" : gs.length === 1 ? gs[0] : `[${gs.join(', ')}]`);
 
   // Name a negated formula's own variables anonymously, so negation lets
@@ -247,34 +252,40 @@ function compileRule(body, head, kind, needed) {
     if (SCOPED_SUBJECT.has(p)) {
       const neg = p === `${LOG}notIncludes`;
       if (x.o.t !== 'graph') {
-        // A formula only known when the rule runs.
-        if (x.o.t !== 'var' || isScope(x.s, scopes)) throw new N3CompileError(`${shortName(p)} needs a formula object`);
+        // A formula only known when the rule runs; anything else, or the
+        // store against a formula not written out, includes nothing.
+        if (x.o.t !== 'var' || isScope(x.s, scopes)) return ["'fail'"];
         needed.add('n3_includes');
-        const test = `n3_includes(${ctx.term(x.s)}, ${ctx.term(x.o)})`;
-        return [neg ? `not(${test})` : test];
+        return [`${neg ? 'n3_not_includes' : 'n3_includes'}(${ctx.term(x.s)}, ${ctx.term(x.o)})`];
       }
       if (neg && !negated) markAnonymous([x.o], x);
       if (isScope(x.s, scopes)) {
+        if (neg) closed++;
         const inner = goals(x.o.triples, negated || neg);
+        if (neg) closed--;
         return neg ? [`not(${conj(inner)})`] : inner;
       }
       needed.add('n3_includes');
-      const test = `n3_includes(${ctx.term(x.s)}, graph([${x.o.triples.map((y) => ctx.rdf(y)).join(', ')}]))`;
-      return [neg ? `not(${test})` : test];
+      return [`${neg ? 'n3_not_includes' : 'n3_includes'}(${ctx.term(x.s)}, graph([${x.o.triples.map((y) => ctx.rdf(y)).join(', ')}]))`];
     }
     if (SCOPED_OBJECT.has(p)) {
-      if (x.s.t !== 'list' || x.s.items.length !== (p === `${LOG}forAllIn` ? 2 : 3)) {
-        throw new N3CompileError(`${shortName(p)} needs a subject list of ${p === `${LOG}forAllIn` ? 'two formulas' : 'a term, a formula and a list'}`);
+      // The formulas must be written in the rule: eyemind cannot call a
+      // formula only known when the rule runs, so such a goal fails.
+      const count = p === `${LOG}forAllIn` ? 2 : 3;
+      if (x.s.t !== 'list' || x.s.items.length !== count || x.s.items[count === 2 ? 0 : 1].t !== 'graph' ||
+          x.s.items[1].t !== 'graph') return ["'fail'"];
+      closed++;
+      try {
+        if (p === `${LOG}collectAllIn`) {
+          const [template, where, list] = x.s.items;
+          return [`findall(${ctx.term(template)}, ${conj(goals(where.triples, negated))}, ${ctx.term(list)})`];
+        }
+        const [where, then] = x.s.items;
+        if (!negated) markAnonymous([where, then], x);
+        return [`not(${conj([...goals(where.triples, true), `not(${conj(goals(then.triples, true))})`])})`];
+      } finally {
+        closed--;
       }
-      if (p === `${LOG}collectAllIn`) {
-        const [template, where, list] = x.s.items;
-        if (where.t !== 'graph') throw new N3CompileError('log:collectAllIn needs a formula as the second subject item');
-        return [`findall(${ctx.term(template)}, ${conj(goals(where.triples, negated))}, ${ctx.term(list)})`];
-      }
-      const [where, then] = x.s.items;
-      if (where.t !== 'graph' || then.t !== 'graph') throw new N3CompileError('log:forAllIn needs two formulas');
-      if (!negated) markAnonymous([where, then], x);
-      return [`not(${conj([...goals(where.triples, true), `not(${conj(goals(then.triples, true))})`])})`];
     }
     if (p === `${LIST}map`) {
       // ((L) P) list:map R: the objects of P for each member of L, in order,
@@ -289,7 +300,26 @@ function compileRule(body, head, kind, needed) {
     const builtin = BUILTINS.get(p);
     if (builtin) {
       if (builtin.text) needed.add(p);
-      return [`${builtin.goal}(${ctx.term(x.s)}, ${ctx.term(x.o)})`];
+      // A list a built-in receives may be written out as rdf:first and
+      // rdf:rest triples; n3_as_list reads it as a list, and passes anything
+      // else on as it is. Inside a negation or collection it would make the
+      // rule depend on every rule that concludes such triples, so there it
+      // is left out.
+      const views = [];
+      const arg = (t, item = false) => {
+        // The items of a written list may be written-out lists too.
+        if (t.t === 'list' && !item && !closed && !LIST_TRIPLES.has(p)) return `[${t.items.map((i) => arg(i, true)).join(', ')}]`;
+        if (closed || LIST_TRIPLES.has(p) || (t.t !== 'var' && t.t !== 'bnode')) return ctx.term(t);
+        needed.add('n3_as_list');
+        const key = `list:${++listViews}`;
+        ctx.anonymous.add(key);
+        const view = ctx.name(key, 'L');
+        views.push(`n3_as_list(${ctx.term(t)}, ${view})`);
+        return view;
+      };
+      const s = arg(x.s);
+      const o = arg(x.o);
+      return [...views, `${builtin.goal}(${s}, ${o})`];
     }
     return [ctx.rdf(x)];
   }
