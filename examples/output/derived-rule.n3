@@ -1,0 +1,4 @@
+@prefix : <http://example.org/policy#> .
+
+{ ?x a :Member } => { ?x :mayRead :report } .
+:alice :mayRead :report .

@@ -1,0 +1,12 @@
+# Ancestors from parents: a backward rule (<=) defines ancestry recursively,
+# decided when a forward rule asks, and log:query selects what to report.
+@prefix : <http://example.org/family#>.
+
+:ann :parent :bob.
+:bob :parent :cat.
+:cat :parent :dan.
+
+{ ?x :ancestor ?y } <= { ?x :parent ?y }.
+{ ?x :ancestor ?z } <= { ?x :parent ?y. ?y :ancestor ?z }.
+
+{ :ann :ancestor ?who } log:query { :ann :ancestor ?who }.

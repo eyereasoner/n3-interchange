@@ -1,0 +1,8 @@
+@prefix : <http://example.org/people#> .
+
+:ann :mother _:b0 .
+_:b0 a :Woman .
+:bob :mother _:b1 .
+_:b1 a :Woman .
+_:b0 :hasChild :ann .
+_:b1 :hasChild :bob .

@@ -1,0 +1,5 @@
+@prefix : <http://example.org/invoice#> .
+
+:inv1 :total 245 .
+:inv2 :total 25 .
+:inv1 a :LargeInvoice .

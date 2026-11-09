@@ -1,0 +1,3 @@
+Order
+- http://example.org/shop#apple: 6 x 0.50 = 3.00
+- http://example.org/shop#pear: 4 x 0.75 = 3.00

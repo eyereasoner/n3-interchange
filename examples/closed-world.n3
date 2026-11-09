@@ -1,0 +1,10 @@
+# Scoped negation: an order ships when it is paid and no hold is on record.
+# log:notIncludes asks the reasoner's store whether a pattern is absent.
+@prefix : <http://example.org/orders#>.
+
+:o1 :status :paid.
+:o2 :status :paid.
+:o2 :hold :addressCheck.
+:o3 :status :open.
+
+{ ?o :status :paid. ?SCOPE log:notIncludes { ?o :hold ?any } } => { ?o :action :ship }.

@@ -1,0 +1,14 @@
+# Collect and compute: log:collectAllIn gathers every line amount of an
+# invoice, math:sum adds them, and math:greaterThan flags large invoices.
+@prefix math: <http://www.w3.org/2000/10/swap/math#>.
+@prefix : <http://example.org/invoice#>.
+
+:inv1 :line [ :amount 120 ], [ :amount 80 ], [ :amount 45 ].
+:inv2 :line [ :amount 10 ], [ :amount 15 ].
+
+{ ?inv :line ?any.
+  (?a { ?inv :line ?l. ?l :amount ?a } ?amounts) log:collectAllIn ?SCOPE.
+  ?amounts math:sum ?total
+} => { ?inv :total ?total }.
+
+{ ?inv :total ?t. ?t math:greaterThan 200 } => { ?inv a :LargeInvoice }.

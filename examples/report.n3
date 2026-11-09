@@ -1,0 +1,15 @@
+# A text report: string:format and math:product build the lines, and
+# log:outputString writes them in the order of their subjects.
+@prefix math: <http://www.w3.org/2000/10/swap/math#>.
+@prefix string: <http://www.w3.org/2000/10/swap/string#>.
+@prefix : <http://example.org/shop#>.
+
+:apple :price 0.5; :qty 6.
+:pear :price 0.75; :qty 4.
+
+:a log:outputString "Order\n".
+{ ?item :price ?p; :qty ?q.
+  (?p ?q) math:product ?cost.
+  ?item log:uri ?u.
+  ("- %s: %d x %.2f = %.2f\n" ?u ?q ?p ?cost) string:format ?line
+} => { ?u log:outputString ?line }.

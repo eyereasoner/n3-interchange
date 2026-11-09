@@ -1,0 +1,10 @@
+# Something exists: every person has a mother, a blank node in the rule's
+# conclusion. Each firing names its own node, so ann and bob get different
+# mothers, and a second rule reasons about them.
+@prefix : <http://example.org/people#>.
+
+:ann a :Person.
+:bob a :Person.
+
+{ ?p a :Person } => { ?p :mother _:m. _:m a :Woman }.
+{ ?p :mother ?m } => { ?m :hasChild ?p }.

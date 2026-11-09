@@ -1,0 +1,3 @@
+@prefix : <http://example.org/orders#> .
+
+:o1 :action :ship .

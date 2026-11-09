@@ -1,0 +1,9 @@
+# Socrates is human, and every human is mortal: one forward rule concludes
+# that Socrates is mortal. The smallest complete N3 program.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix : <http://example.org/socrates#>.
+
+:Socrates a :Human.
+:Human rdfs:subClassOf :Mortal.
+
+{ ?S a ?A. ?A rdfs:subClassOf ?B } => { ?S a ?B }.
