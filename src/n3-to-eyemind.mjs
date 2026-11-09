@@ -12,7 +12,9 @@
 // A rule's ?variables and blank nodes are eyemind variables; a blank node
 // only the conclusion mentions is the Skolem term of that firing. Built-in
 // predicates of a body become goals defined in eyemind itself (builtins.mjs).
-import { parseN3, LOG, XSD } from './n3-parser.mjs';
+import { Struct, loadText, run, write } from 'eyemind';
+import { N3SyntaxError, parseN3, LOG, XSD } from './n3-parser.mjs';
+import { triplesFromEyemind } from './eyemind-to-n3.mjs';
 
 const MATH = 'http://www.w3.org/2000/10/swap/math#';
 const STRING = 'http://www.w3.org/2000/10/swap/string#';
@@ -40,18 +42,30 @@ export function compileN3Document(doc, { source = 'input' } = {}) {
   const rules = [];
   const needed = new Set();
   let queries = 0;
+  // Only a document that mentions rdf:first or rdf:rest can write a list out
+  // as triples, so only its built-ins read lists that way.
+  const views = usesPredicate(doc.triples, `${RDF_NS}first`) || usesPredicate(doc.triples, `${RDF_NS}rest`) ||
+    mentions(doc.triples, `${RDF_NS}first`) || mentions(doc.triples, `${RDF_NS}rest`);
   for (const triple of doc.triples) {
     const p = triple.p.t === 'iri' ? triple.p.v : null;
     if (p === `${LOG}implies` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
-      rules.push(compileRule(triple.s, triple.o, 'forward', needed));
+      rules.push(compileRule(triple.s, triple.o, 'forward', needed, views));
     } else if (p === `${LOG}impliedBy` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
-      rules.push(compileRule(triple.o, triple.s, 'backward', needed));
+      rules.push(compileRule(triple.o, triple.s, 'backward', needed, views));
     } else if (p === `${LOG}query` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
       queries++;
-      rules.push(compileRule(triple.s, triple.o, 'query', needed));
+      rules.push(compileRule(triple.s, triple.o, 'query', needed, views));
     } else {
       const ctx = new Context(false);
       facts.push(`fact(${ctx.rdf(triple)})`);
+    }
+  }
+  // log:conclusion reads the closure of a formula the document states, worked
+  // out now by running the formula as a program of its own.
+  if (usesPredicate(doc.triples, `${LOG}conclusion`)) {
+    for (const formula of statedFormulas(doc.triples)) {
+      const ctx = new Context(false);
+      facts.push(`fact(n3_conclusion_of(${ctx.term(formula)}, ${ctx.term(closure(formula))}))`);
     }
   }
   const lines = [
@@ -65,6 +79,78 @@ export function compileN3Document(doc, { source = 'input' } = {}) {
   const library = libraryText(needed);
   if (library) lines.push('', '// N3 built-ins.', library);
   return { program: `${lines.join('\n')}\n`, prefixes: doc.prefixes, queries };
+}
+
+// The deductive closure of a formula: its own triples, rules included, and
+// those its rules derive, run as a program of its own.
+const CLOSURE_LIMITS = { maxDepth: 1000000, maxIterations: 100000, maxInferences: 100000000 };
+
+export function closure(formula) {
+  const { program } = compileN3Document({ triples: formula.triples, prefixes: new Map() }, { source: 'a formula' });
+  const result = run(loadText(program, 'formula.js'), CLOSURE_LIMITS);
+  const derived = triplesFromEyemind(result.answers.join('\n')).triples;
+  return { t: 'graph', triples: [...formula.triples, ...derived.map(([s, p, o]) => ({ s: fromEyemind(s), p: fromEyemind(p), o: fromEyemind(o) }))], scope: formula.scope };
+}
+
+// An eyemind conclusion as the parsed term n3-to-eyemind wrote it from. A
+// blank node keeps its label, and a Skolem term becomes one labelled by its
+// text, the same for the same firing.
+function fromEyemind(t) {
+  if (typeof t === 'bigint') return { t: 'int', v: t };
+  if (typeof t === 'number') return { t: 'float', v: t };
+  if (t === '[]') return { t: 'list', items: [] };
+  if (!(t instanceof Struct)) throw new N3CompileError(`a closure holds a term N3 cannot state: ${write(t)}`);
+  const [a, b, c] = t.args;
+  switch (`${t.name}/${t.args.length}`) {
+    case 'iri/1': return { t: 'iri', v: a };
+    case 'bnode/2': return { t: 'bnode', v: b, scope: 0 };
+    case 'skolem/3': return { t: 'bnode', v: write(t), scope: 0 };
+    case 'qvar/1': return { t: 'var', v: a };
+    case 'qbnode/1': return { t: 'bnode', v: a, scope: 0 };
+    case 'triple/3': return { t: 'triple', s: fromEyemind(a), p: fromEyemind(b), o: fromEyemind(c) };
+    case 'literal/2':
+      if (b instanceof Struct && b.name === 'lang') return { t: 'literal', v: a, lang: b.args[0], dir: b.args[1] ?? null, dt: '' };
+      return { t: 'literal', v: a, dt: b.args[0] };
+    case 'graph/1': return { t: 'graph', triples: listOf(a).map((x) => ({ s: fromEyemind(x.args[0]), p: fromEyemind(x.args[1]), o: fromEyemind(x.args[2]) })), scope: 0 };
+    case './2': return { t: 'list', items: listOf(t).map(fromEyemind) };
+    default: throw new N3CompileError(`a closure holds a term N3 cannot state: ${write(t)}`);
+  }
+}
+
+function listOf(t) {
+  const items = [];
+  for (; t instanceof Struct && t.name === '.'; t = t.args[1]) items.push(t.args[0]);
+  return items;
+}
+
+// Whether any term of the triples, at any depth, is the IRI.
+function mentions(triples, iri) {
+  const term = (t) => (t.t === 'iri' ? t.v === iri : t.t === 'graph' ? mentions(t.triples, iri)
+    : t.t === 'list' ? t.items.some(term) : t.t === 'triple' ? [t.s, t.p, t.o].some(term) : false);
+  return triples.some((x) => [x.s, x.p, x.o].some(term));
+}
+
+function usesPredicate(triples, iri) {
+  return triples.some((x) => (x.p.t === 'iri' && x.p.v === iri) || [x.s, x.o].some((t) => termUses(t, iri)));
+}
+function termUses(t, iri) {
+  if (t.t === 'graph') return usesPredicate(t.triples, iri);
+  if (t.t === 'list') return t.items.some((x) => termUses(x, iri));
+  return false;
+}
+
+// The formulas the document's own facts state, each once, outermost first.
+function statedFormulas(triples) {
+  const found = [];
+  const visit = (t) => {
+    if (t.t === 'graph') found.push(t);
+    else if (t.t === 'list') t.items.forEach(visit);
+  };
+  for (const x of triples) {
+    const rule = x.p.t === 'iri' && [`${LOG}implies`, `${LOG}impliedBy`, `${LOG}query`].includes(x.p.v) && isFormulaLike(x.s) && isFormulaLike(x.o);
+    if (!rule) [x.s, x.o].forEach(visit);
+  }
+  return found;
 }
 
 const isFormulaLike = (t) => t.t === 'graph' || (t.t === 'literal' && t.dt === `${XSD}boolean`);
@@ -216,10 +302,24 @@ function withPattern(x, where) {
 
 const SCOPED_SUBJECT = new Set([`${LOG}includes`, `${LOG}notIncludes`]);
 const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-const LIST_TRIPLES = new Set([`${RDF_NS}first`, `${RDF_NS}rest`]);
+// The argument positions where a built-in takes a list, which may be written
+// out as rdf:first and rdf:rest triples.
+const LIST_SUBJECT = new Set([
+  ...['sum', 'product', 'difference', 'quotient', 'integerQuotient', 'remainder', 'exponentiation', 'atan2', 'logarithm',
+    'min', 'max'].map((n) => `${MATH}${n}`),
+  ...['concatenation', 'format', 'replace', 'scrape', 'substring'].map((n) => `${STRING}${n}`),
+  ...['dtlit', 'langlit', 'conjunction', 'skolem', 'equalTo', 'notEqualTo'].map((n) => `${LOG}${n}`),
+]);
+const LIST_OBJECT = new Set([`${LOG}equalTo`, `${LOG}notEqualTo`]);
+function takesList(p, position) {
+  // list: built-ins take lists on both sides, but for the element of
+  // list:in and list:member.
+  if (p.startsWith(LIST)) return !(position === 's' && p === `${LIST}in`) && !(position === 'o' && p === `${LIST}member`);
+  return position === 's' ? LIST_SUBJECT.has(p) : LIST_OBJECT.has(p);
+}
 const SCOPED_OBJECT = new Set([`${LOG}collectAllIn`, `${LOG}forAllIn`]);
 
-function compileRule(body, head, kind, needed) {
+function compileRule(body, head, kind, needed, views = true) {
   const ctx = new Context(true);
   if (!isFormulaLike(body)) throw new N3CompileError('a rule premise must be a formula');
   const bodyTriples = triplesOf(body);
@@ -296,6 +396,25 @@ function compileRule(body, head, kind, needed) {
       const [e, y] = [ctx.name(`map:e:${++ctx.anonCount}`, 'E_map'), ctx.name(`map:y:${ctx.anonCount}`, 'Y_map')];
       return [`findall(${y}, [n3_member(${e}, ${list}), rdf(${e}, ${pred}, ${y})], ${ctx.term(x.o)})`];
     }
+    if (p === `${LOG}parsedAsN3`) {
+      // A string written in the rule is parsed now, and compared with the
+      // object as a formula; text only known when the rule runs, or text
+      // that is not N3, gives no formula.
+      if (x.s.t !== 'literal') return ["'fail'"];
+      let parsed;
+      try {
+        parsed = parseN3(x.s.v);
+      } catch (error) {
+        if (error instanceof N3SyntaxError) return ["'fail'"];
+        throw error;
+      }
+      needed.add(`${LOG}equalTo`);
+      return [`n3_log_equalTo(${new Context(false).term({ t: 'graph', triples: parsed.triples, scope: 1 })}, ${ctx.term(x.o)})`];
+    }
+    if ((p === `${LOG}equalTo` || p === `${LOG}notEqualTo`) && [x.s, x.o].some((t) => !['var', 'bnode', 'graph', 'list'].includes(t.t))) {
+      // A constant that is no formula: equality is unification.
+      return [`${p === `${LOG}equalTo` ? 'unify' : 'not_unify'}(${ctx.term(x.s)}, ${ctx.term(x.o)})`];
+    }
     if (REGEX_PATTERN.has(p)) x = withPattern(x, REGEX_PATTERN.get(p));
     const builtin = BUILTINS.get(p);
     if (builtin) {
@@ -305,21 +424,23 @@ function compileRule(body, head, kind, needed) {
       // else on as it is. Inside a negation or collection it would make the
       // rule depend on every rule that concludes such triples, so there it
       // is left out.
-      const views = [];
+      const viewGoals = [];
       const arg = (t, item = false) => {
         // The items of a written list may be written-out lists too.
-        if (t.t === 'list' && !item && !closed && !LIST_TRIPLES.has(p)) return `[${t.items.map((i) => arg(i, true)).join(', ')}]`;
-        if (closed || LIST_TRIPLES.has(p) || (t.t !== 'var' && t.t !== 'bnode')) return ctx.term(t);
+        if (t.t === 'list' && views && !item && !closed && takesList(p, position)) return `[${t.items.map((i) => arg(i, true)).join(', ')}]`;
+        if (!views || closed || !takesList(p, position) || (t.t !== 'var' && t.t !== 'bnode')) return ctx.term(t);
         needed.add('n3_as_list');
         const key = `list:${++listViews}`;
         ctx.anonymous.add(key);
         const view = ctx.name(key, 'L');
-        views.push(`n3_as_list(${ctx.term(t)}, ${view})`);
+        viewGoals.push(`n3_as_list(${ctx.term(t)}, ${view})`);
         return view;
       };
+      let position = 's';
       const s = arg(x.s);
+      position = 'o';
       const o = arg(x.o);
-      return [...views, `${builtin.goal}(${s}, ${o})`];
+      return [...viewGoals, `${builtin.goal}(${s}, ${o})`];
     }
     return [ctx.rdf(x)];
   }
@@ -370,10 +491,12 @@ const INLINE = new Set([`${LIST}map`]);
 // Built-ins that also run from a bound object to their subject.
 const REVERSIBLE = new Set([`${LIST}firstRest`, `${LIST}append`, `${LOG}uri`, `${LOG}dtlit`, `${LOG}langlit`, `${MATH}negation`]);
 
-// Body triples in evaluation order. A built-in waits for the ordinary
-// triples after it that bind its inputs (a test's every variable, another
-// built-in's subject), so { ?a log:notEqualTo ?b. ?x :p ?a. ?y :p ?b }
-// compares bound values; otherwise the written order stays.
+// Body triples in evaluation order. A built-in waits for the goals after it
+// that bind its inputs (a test's every variable, another built-in's
+// subject): ordinary triples, and built-ins that compute their object, so
+// { ?a log:notEqualTo ?b. ?x :p ?a. ?y :p ?b } compares bound values and
+// { (?x 1) math:sum ?y. (1 2 3) list:iterate (?i ?x) } adds to a bound ?x.
+// Otherwise the written order stays.
 function reorder(triples, outside, given) {
   const isPlain = (x) => x.p.t !== 'iri' || (!BUILTINS.has(x.p.v) && !INLINE.has(x.p.v) && !TESTS.has(x.p.v) && !SCOPED_SUBJECT.has(x.p.v) && !SCOPED_OBJECT.has(x.p.v));
   const inputs = (x) => {
@@ -389,9 +512,18 @@ function reorder(triples, outside, given) {
   const order = [];
   const bound = new Set(given);
   const pending = [];
+  // What a goal binds: an ordinary triple its variables, a test nothing, a
+  // collection its list, and another built-in its object.
+  const binds = (x, keys) => {
+    if (isPlain(x)) return keysOfTriple(x, keys);
+    const p = x.p.v;
+    if (TESTS.has(p) || SCOPED_SUBJECT.has(p)) return keys;
+    if (p === `${LOG}collectAllIn`) return x.s.t === 'list' && x.s.items[2] ? keysOf(x.s.items[2], keys) : keys;
+    return keysOf(x.o, keys);
+  };
   const later = (i) => {
     const keys = new Set();
-    for (let k = i; k < triples.length; k++) if (isPlain(triples[k])) keysOfTriple(triples[k], keys);
+    for (let k = i; k < triples.length; k++) binds(triples[k], keys);
     return keys;
   };
   const place = (x) => {

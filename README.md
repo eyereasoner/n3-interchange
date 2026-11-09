@@ -128,25 +128,28 @@ the notation3tests suite as eyeling mirrors it:
 
 | Corpus | Result |
 | --- | --- |
-| eyeling examples with an expected output | 159 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
-| notation3tests | 1031 of 1163 |
+| eyeling examples with an expected output | 169 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
+| notation3tests | 1072 of 1163 |
 
 ```sh
 node tools/corpus.mjs ../eyeling/examples
 node tools/notation3tests.mjs ../eyeling/test/notation3tests/tests
 ```
 
-The parser reads all 227 eyeling examples. Most of the remaining differences
-come from built-ins that need what eyemind leaves out by design, and
-`n3-to-eyemind` stops with an error naming the built-in and the reason:
+The parser reads all 227 eyeling examples. Some built-ins need what eyemind
+leaves out by design, and `n3-to-eyemind` stops with an error naming the
+built-in and the reason:
 
 | Built-ins | eyemind has no |
 | --- | --- |
 | `log:semantics`, `semanticsOrError`, `content` | file or network access |
-| `log:conclusion`, `log:conjunction`, `log:parsedAsN3` | reasoning over or merging formulas at run time |
-| `log:skolem`, `log:nameOf` | naming terms by their text |
 | `log:implies`, `log:impliedBy` in a premise | matching rules as data |
-| `crypto:*`, `time:localTime` and `gmTime` | hashing, clock |
+| `log:trace` | printing while reasoning |
+| `time:localTime`, `gmTime`, `currentTime` | clock |
+
+Four eyeling examples that check a `crypto:sha256` digest (calidor, delfour,
+flandor, medior) differ because eyeling hashes the escaped text of a string,
+backslashes included; n3-interchange hashes the string itself.
 
 Other limits:
 
@@ -158,14 +161,18 @@ Other limits:
   a naive Fibonacci exhaust memory.
 - A rule whose conclusion is a variable, `{ ... } => ?F`, is read as a
   triple, not as a rule.
+- `log:conclusion` knows the closure of each formula the document states,
+  worked out while compiling; a formula only built while reasoning has none,
+  and the goal fails. `log:parsedAsN3` parses a string written in the rule
+  while compiling; a string only known while reasoning gives no formula.
 - Quoted formulas match as ordered lists of triples, not as sets;
   `log:equalTo` and `log:notEqualTo` compare them as sets, but not up to
   renaming blank nodes.
 - `log:collectAllIn` and `log:forAllIn` need their formulas written in the
   rule; one only known when the rule runs makes the goal fail.
 - Decimals and doubles are both binary64 floats, and `xsd:float` is one too.
-- Built-ins called with every argument unbound fail, case-insensitive string
-  built-ins fold only ASCII letters, and `INF` and `NaN` are not numbers.
+- Built-ins called with every argument unbound fail, and `INF` and `NaN`
+  are not numbers.
 
 ## JavaScript API
 

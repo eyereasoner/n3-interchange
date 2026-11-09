@@ -55,7 +55,7 @@ test('compiler: IRIs are iri(Text) and rules are eyemind rules', () => {
   assert.match(program, /^implies\(rdf\(X, iri\("http:\/\/example.org\/#p"\), Y\), rdf\(Y, iri\("http:\/\/example.org\/#q"\), X\)\)$/m);
 });
 test('compiler: an unsupported built-in is an error that says why', () => {
-  assert.throws(() => compileN3(`${P}{ "a" crypto:sha ?h } => { :t :is ?h }.`), /crypto:sha is not supported: eyemind has no hashing/);
+  assert.throws(() => compileN3(`${P}{ <http://e/doc> log:semantics ?f } => { :t :is ?f }.`), /log:semantics is not supported: eyemind has no file and network access/);
 });
 test('compiler: a constant pattern drops escapes Unicode mode forbids', () => {
   const { program } = compileN3(`${P}{ ?s :p ?t. ?t string:matches "a\\\\:b\\\\.c" } => { ?s :ok true }.`);
@@ -120,6 +120,21 @@ test('regular-expression built-ins', () => {
       ("2026-11" "([0-9]+)-([0-9]+)" "$2/$1") string:replace ?r. ("id=42;" "id=([0-9]+)") string:scrape ?g }
     => { :r :is (?r ?g) }.`);
   assert.match(out, /:r :is \("11\/2026" "42"\) \./);
+});
+test('digests, skolem IRIs, Unicode case and formula conjunction', () => {
+  const out = reason(`${P}{ "abc" crypto:sha256 ?h. "abc" crypto:md5 ?m.
+      (:a 1) log:skolem ?k1. (:a 1) log:skolem ?k2. (:a 2) log:skolem ?k3.
+      "Élan" string:equalIgnoringCase "éLAN". "straße" string:upperCase ?u.
+      ({ :a :b :c } { :d :e :f. :a :b :c }) log:conjunction ?f.
+      ?f log:equalTo { :d :e :f. :a :b :c }.
+      "<http://e/s> <http://e/p> 1." log:parsedAsN3 { <http://e/s> <http://e/p> 1 } }
+    => { :r :is (?h ?m ?u); :same ?k1, ?k2; :other ?k3 }.`);
+  assert.match(out, /"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" "900150983cd24fb0d6963f7d28e17f72" "STRASSE"/);
+  const same = [...out.matchAll(/:same (<[^>]+>)/g)].map((m) => m[1]);
+  const other = /:other (<[^>]+>)/.exec(out)[1];
+  assert.equal(same.length, 1);
+  assert.match(same[0], /^<https:\/\/eyereasoner.github.io\/.well-known\/genid\/[0-9a-f]{64}>$/);
+  assert.notEqual(same[0], other);
 });
 test('numbers keep their kind: integers stay exact', () => {
   const out = reason(`${P}{ (9007199254740993 1) math:sum ?s. (2 0.5) math:product ?p } => { :r :is (?s ?p) }.`);

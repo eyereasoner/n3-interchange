@@ -74,17 +74,10 @@ implied_by(n3_str_result(A, O), [is_nonvar(O), n3_str(O, A)])`,
   },
   n3_lower: {
     text: `
-// n3_lower(A, L): A with ASCII capitals in lower case.
-implied_by(n3_lower(A, L), [atom_codes(A, Cs), n3_lower_codes(Cs, Ls), atom_codes(L, Ls)])
-implied_by(n3_upper(A, U), [atom_codes(A, Cs), n3_upper_codes(Cs, Us), atom_codes(U, Us)])
-fact(n3_lower_codes([], []))
-implied_by(n3_lower_codes([C, ...R], [D, ...S]), [n3_lower_code(C, D), n3_lower_codes(R, S)])
-implied_by(n3_lower_code(C, D), [ge(C, 65), le(C, 90), is(D, add(C, 32))])
-implied_by(n3_lower_code(C, C), or(lt(C, 65), gt(C, 90)))
-fact(n3_upper_codes([], []))
-implied_by(n3_upper_codes([C, ...R], [D, ...S]), [n3_upper_code(C, D), n3_upper_codes(R, S)])
-implied_by(n3_upper_code(C, D), [ge(C, 97), le(C, 122), is(D, sub(C, 32))])
-implied_by(n3_upper_code(C, C), or(lt(C, 97), gt(C, 122)))`,
+// n3_lower(A, L), n3_upper(A, U): Unicode case conversion; comparing lower
+// cases ignores case, as 'É' and 'é' are the same letter.
+implied_by(n3_lower(A, L), atom_lower(A, L))
+implied_by(n3_upper(A, U), atom_upper(A, U))`,
   },
   n3_contains: {
     text: `
@@ -141,9 +134,9 @@ implied_by(n3_described(T, Seen, [X, ...R]), [not(n3_member(T, Seen)), rdf(T, ir
     text: `
 // n3_includes(G, F): every triple of the formula F is a triple of the formula G.
 implied_by(n3_includes(G, F), [is_nonvar(G), is_nonvar(F), n3_includes_(G, F)])
-// Negated here, with both formulas known, so the negation has no variable
-// to bind.
-implied_by(n3_not_includes(G, F), [is_nonvar(G), is_nonvar(F), not(n3_includes_(G, F))])
+// No triple of F matches G, with F's unbound variables standing for any
+// value: an empty collection, which unlike a negation allows them.
+implied_by(n3_not_includes(G, F), [is_nonvar(G), is_nonvar(F), findall('found', n3_includes_(G, F), [])])
 implied_by(n3_includes_(graph(Ts), graph(Ps)), n3_all_members(Ps, Ts))
 fact(n3_all_members([], _))
 implied_by(n3_all_members([P, ...Ps], Ts), [n3_member(P, Ts), n3_all_members(Ps, Ts)])`,
@@ -440,6 +433,36 @@ implied_by(n3_time_timeZone(S, O), [n3_str(S, A), atom_chars(A, Cs), n3_take(19,
 implied_by(n3_zone(['.', ...R], Z), [n3_digit_prefix(R, _, Rest), n3_zone(Rest, Z)])
 implied_by(n3_zone([C, ...R], [C, ...R]), not_identical(C, '.'))`, ['n3_str', 'n3_str_result', 'n3_digits', 'n3_format']);
 
+// crypto: digests of a string's UTF-8 bytes, in lowercase hexadecimal.
+const CRYPTO = 'http://www.w3.org/2000/10/swap/crypto#';
+for (const [name, algorithm] of [['md5', 'md5'], ['sha', 'sha1'], ['sha1', 'sha1'], ['sha256', 'sha256'], ['sha512', 'sha512']]) {
+  def(`${CRYPTO}${name}`, `n3_crypto_${name}`, `
+implied_by(n3_crypto_${name}(S, O), [n3_str(S, A), digest('${algorithm}', A, H), n3_str_result(H, O)])`, ['n3_str', 'n3_str_result']);
+}
+
+// log:skolem names a ground term by the SHA-256 of its canonical text, so the
+// same term always gets the same IRI and different terms different ones.
+def(`${LOG}skolem`, 'n3_log_skolem', `
+implied_by(n3_log_skolem(S, O), [is_ground(S), term_text(S, T), digest('sha256', T, H),
+  atom_concat('https://eyereasoner.github.io/.well-known/genid/', H, I), unify(O, iri(I))])`);
+
+// F log:conclusion C: C is the deductive closure of F, worked out while
+// compiling for every formula the document states (n3_conclusion_of facts);
+// a formula only built while reasoning has none.
+def(`${LOG}conclusion`, 'n3_log_conclusion', `
+implied_by(n3_log_conclusion(F, O), [is_nonvar(F), n3_conclusion_of(F, C), n3_conclusion_result(C, O)])
+implied_by(n3_conclusion_result(C, O), [is_var(O), unify(O, C)])
+implied_by(n3_conclusion_result(graph(Ts), O), [is_nonvar(O), n3_sort(Ts, S), n3_triple_set(O, S)])`, ['n3_sort', 'n3_formulas']);
+
+// (F1 ... Fn) log:conjunction F: F holds the triples of every Fi, once each.
+def(`${LOG}conjunction`, 'n3_log_conjunction', `
+implied_by(n3_log_conjunction(L, O), [is_ground(L), n3_conj(L, Ts), n3_sort(Ts, S), n3_conj_result(S, O)])
+fact(n3_conj([], []))
+implied_by(n3_conj([graph(Ts), ...R], All), [n3_conj(R, Rest), n3_append(Ts, Rest, All)])
+implied_by(n3_conj([literal('true', datatype('${XSD}boolean')), ...R], All), n3_conj(R, All))
+implied_by(n3_conj_result(S, O), [is_var(O), unify(O, graph(S))])
+implied_by(n3_conj_result(S, O), [is_nonvar(O), n3_triple_set(O, S)])`, ['n3_sort', 'n3_append', 'n3_formulas']);
+
 // log:
 // Formulas are equal when they hold the same triples, in any order.
 def(`${LOG}equalTo`, 'n3_log_equalTo', `
@@ -480,20 +503,14 @@ def(`${LOG}langlit`, 'n3_log_langlit', `
 implied_by(n3_log_langlit([S, T], O), [is_nonvar(S), n3_str(S, A), n3_str(T, L), unify(O, literal(A, lang(L)))])
 implied_by(n3_log_langlit([S, T], O), [is_var(S), unify(O, literal(A, lang(L))), unify(S, literal(A, datatype('${XSD}string'))), unify(T, literal(L, datatype('${XSD}string')))])`, ['n3_str']);
 
-// Built-ins that need what eyemind deliberately leaves out: hashing, clocks,
-// file and network access, and reasoning over a formula's closure.
+// Built-ins that need what eyemind deliberately leaves out: clocks, file and
+// network access, printing, and rules as data.
 export const UNSUPPORTED = new Map([
   [`${LOG}semantics`, 'file and network access'],
   [`${LOG}semanticsOrError`, 'file and network access'],
   [`${LOG}content`, 'file and network access'],
-  [`${LOG}parsedAsN3`, 'parsing at run time'],
-  [`${LOG}conclusion`, 'the deductive closure of a formula'],
-  [`${LOG}conjunction`, 'merging formulas'],
-  [`${LOG}skolem`, 'naming terms by their text'],
-  [`${LOG}nameOf`, 'naming terms by their text'],
   [`${LOG}trace`, 'printing while reasoning'],
   [`${LOG}implies`, 'matching rules as data'],
   [`${LOG}impliedBy`, 'matching rules as data'],
 ]);
-for (const name of ['sha', 'sha256', 'sha512', 'md5']) UNSUPPORTED.set(`http://www.w3.org/2000/10/swap/crypto#${name}`, 'hashing');
 for (const name of ['localTime', 'gmTime', 'currentTime']) UNSUPPORTED.set(`http://www.w3.org/2000/10/swap/time#${name}`, 'a clock');

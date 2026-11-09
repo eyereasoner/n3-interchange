@@ -70,7 +70,13 @@ are ordinary derivations, so a proof cites them like any other.
 | `({ A } { B }) log:forAllIn ?S` | `not([A, not(B)])` |
 | `F1 log:includes F2`, formulas | `n3_includes(F1, F2)`, each triple of `F2` in `F1` |
 | `((L) P) list:map R` | `findall(Y, [n3_member(X, L), rdf(X, P, Y)], R)` |
-| `log:equalTo`, `log:notEqualTo` | `unify`, `not_unify` |
+| `log:equalTo`, `log:notEqualTo` | `unify`, `not_unify` for a constant that is no formula; formulas as sets |
+| `crypto:md5`, `sha`, `sha256`, `sha512` | eyemind's `digest` of the string's UTF-8 bytes, in hexadecimal |
+| `string:lowerCase`, `upperCase`, `…IgnoringCase` | eyemind's `atom_lower`, `atom_upper`: Unicode case conversion |
+| `L log:skolem I` | `https://eyereasoner.github.io/.well-known/genid/` and the SHA-256 of `term_text(L)` |
+| `(F1 … Fn) log:conjunction F` | the triples of all `Fi`, sorted, each once |
+| `F log:conclusion C` | `n3_conclusion_of(F, C)`, a fact per formula the document states, its closure computed while compiling |
+| `"…" log:parsedAsN3 F` | the string parsed while compiling, compared with `F` as a set |
 | `S string:matches P`, `notMatches` | `regex_match(P, S)`, `not(regex_match(P, S))` |
 | `(S P R) string:replace U` | `regex_replace(P, S, R, U)`, every match replaced |
 | `(S P) string:scrape G` | the first group of the first match, `once(regex_find(P, S, [_, G, ..._]))` |
@@ -88,9 +94,11 @@ collection `( ... )`, so a triple pattern does not match one with the other.
 A built-in reads both as a list: before it, each `?variable` or blank node
 argument, and each such item of a written list, passes through
 `n3_as_list(T, L)`, which follows the description, nested descriptions too,
-and passes anything else on unchanged. Inside a negation or collection the
-step is left out, since reading `rdf:first` triples there would make the rule
-depend on every rule that concludes them.
+and passes anything else on unchanged. Only a document that mentions
+`rdf:first` or `rdf:rest` gets these steps, since only it can write a list
+out, and they are left out inside a negation or collection, where reading
+`rdf:first` triples would make the rule depend on every rule that concludes
+them.
 
 A scope is the subject of `log:includes` or `log:notIncludes`, or the object
 of `log:collectAllIn` or `log:forAllIn`. A variable that appears nowhere else
