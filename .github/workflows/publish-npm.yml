@@ -1,0 +1,78 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish, such as v0.1.0'
+        required: true
+        type: string
+      dry_run:
+        description: 'Verify the package without publishing'
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      # Trusted publishing needs npm 11.5.1 or later, which Node.js 24 ships.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify release tag and package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          node -e '
+            const { name, version } = require("./package.json");
+            if (name !== "n3-interchange" || process.env.RELEASE_TAG !== `v${version}`) {
+              console.error(`Publish requires the n3-interchange release tag v${version}.`);
+              process.exit(1);
+            }
+            console.log(`Publishing candidate: n3-interchange ${version}`);
+          '
+
+      # A version npm already has, such as one published by hand before the
+      # trusted publisher existed, is left as it is.
+      - name: Check whether npm has this version
+        id: published
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if npm view "n3-interchange@$version" version >/dev/null 2>&1; then
+            echo "npm already has n3-interchange $version; nothing to publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install
+        run: npm install
+
+      - name: Test
+        run: npm test
+
+      - name: Verify packaged files
+        run: npm publish --dry-run
+
+      # npm accepts n3-interchange versions only through this workflow's
+      # trusted publisher, which exchanges the Actions identity for a
+      # short-lived token and attaches provenance; no npm token is stored.
+      - name: Publish to npm
+        if: ${{ !inputs.dry_run && steps.published.outputs.exists != 'true' }}
+        run: npm publish

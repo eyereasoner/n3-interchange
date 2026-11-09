@@ -155,3 +155,20 @@ npm test
 
 Unit tests, every example against its saved output, and the three commands
 chained against `eyemind-n3`.
+
+## Releases
+
+`package.json` holds the version. A release runs the tests, bumps the
+version, commits, tags and pushes; the tag makes GitHub create the release
+and publish the package to npm through npm trusted publishing, with
+provenance and no stored token:
+
+```sh
+./release patch "Release v0.1.1: describe what changed"
+./release minor "Release v0.2.0: describe what changed"
+```
+
+The message is used as given for the commit, the tag and the release, and
+must say what changed. The publish workflow can also be run by hand for an
+existing tag, optionally as a dry run, and leaves a version npm already has
+as it is.

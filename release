@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Release n3-interchange: bump the version, commit, tag and push. The tag
+# starts the GitHub workflows that create the GitHub release and publish the
+# package to npm.
+#
+#     ./release patch "Release v0.1.1: support more built-ins"
+#     ./release minor "Release v0.2.0: add TriG input"   the message is used as given
+set -euo pipefail
+
+RELEASE_TYPE="${1:-patch}"
+MESSAGE="${2:-}"
+
+case "$RELEASE_TYPE" in
+  major|minor|patch) ;;
+  *)
+    echo "Usage: $0 {major|minor|patch} \"description of the changes\"" >&2
+    exit 1
+    ;;
+esac
+
+# The commit subject becomes the Actions run title as well as the release
+# message. Require the change summary before pulling, testing or bumping.
+VERSION_ONLY='^[[:space:]]*([Rr]elease[[:space:]]+)?v?[0-9]+\.[0-9]+\.[0-9]+[[:space:]]*:?[[:space:]]*$'
+if [[ -z "${MESSAGE//[[:space:]]/}" || "$MESSAGE" =~ $VERSION_ONLY ]]; then
+  echo 'Error: supply a descriptive release message, for example: ./release patch "Release v0.1.1: support more built-ins".' >&2
+  exit 1
+fi
+
+cd "$(dirname "$0")"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Error: the working tree has uncommitted changes; commit or stash them first." >&2
+  exit 1
+fi
+
+# Switch to the main branch and update it without creating a merge commit.
+git switch main
+git pull --ff-only
+
+# Test before anything changes, within a memory cap where systemd allows one.
+if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope -q true 2>/dev/null; then
+  systemd-run --user --scope -q -p MemoryMax="${N3_INTERCHANGE_TEST_MEMORY:-3G}" -p MemorySwapMax=0 -- npm test
+else
+  npm test
+fi
+
+# package.json holds the one version.
+VERSION="v$(npm version "$RELEASE_TYPE" --no-git-tag-version | sed 's/^v//')"
+
+git add package.json
+git commit -m "$MESSAGE"
+git tag -a "$VERSION" -m "$MESSAGE"
+
+# Push the branch and the tag together, so the release workflows see both.
+git push --atomic origin main "$VERSION"
+
+echo "Released $VERSION with the message: $MESSAGE"
