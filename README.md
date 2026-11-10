@@ -2,6 +2,12 @@
 
 [![npm](https://img.shields.io/npm/v/n3-interchange.svg)](https://www.npmjs.com/package/n3-interchange)
 
+> [!NOTE]
+> Notation3 now lives in [eyemind](https://github.com/eyereasoner/eyemind)
+> itself: `eyemind file.n3` compiles and runs an N3 document, and `eyemind
+> --program file.n3` prints the compiled program. This package is kept as it
+> was at its last release and is no longer developed.
+
 Notation3 (N3) for [eyemind](https://github.com/eyereasoner/eyemind). It
 compiles N3 facts and rules into an eyemind program and writes eyemind's
 conclusions back as N3. Run together, eyemind becomes an N3 reasoner: it reads
