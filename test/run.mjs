@@ -14,6 +14,11 @@ let failed = 0;
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 const reason = (text, options) => reasonN3(text, options).n3;
+const checkedReason = (text) => {
+  const r = reasonN3(text, { proof: true });
+  assert.equal(checkProof(loadText(r.program, 'compiled.js'), r.result.proof).valid, true);
+  return r.n3;
+};
 const P = '@prefix : <http://example.org/#>.\n';
 
 // Parsing.
@@ -174,6 +179,107 @@ test('string:charAt and string:setCharAt count from 0', () => {
 test('numbers keep their kind: integers stay exact', () => {
   const out = reason(`${P}{ (9007199254740993 1) math:sum ?s. (2 0.5) math:product ?p } => { :r :is (?s ?p) }.`);
   assert.match(out, /:r :is \(9007199254740994 1\.0\) \./);
+});
+test('list:append compares bound numeric elements by value and preserves generated terms', () => {
+  const out = checkedReason(`${P}{ ((6.0) (42e0)) list:append (6 42e0).
+      ((6.0) (42e0)) list:append ?values } => { :r :is ?values }.`);
+  assert.match(out, /:r :is \(6\.0 42\.0\) \./);
+  assert.equal(reason(`${P}{ ((6.0) (42e0)) list:append (6 43) } => { :r :is :wrong }.`), '');
+  assert.equal(reason(`${P}{ (("6") (42)) list:append (6 42) } => { :r :is :wrong }.`), '');
+});
+test('list:append reads numeric results and inputs written as RDF lists', () => {
+  const out = checkedReason(`${P}:out :list [ rdf:first 6; rdf:rest [ rdf:first 42e0; rdf:rest rdf:nil ] ].
+    :in :list [ rdf:first (6.0); rdf:rest [ rdf:first (42e0); rdf:rest rdf:nil ] ].
+    { :out :list ?out. :in :list ?in. ?in list:append ?out } => { :r :is :ok }.`);
+  assert.match(out, /:r :is :ok \./);
+});
+test('list:append still enumerates every split of a supplied result', () => {
+  const out = checkedReason(`${P}{ (?left ?right) list:append (1 2) } => { :r :is (?left ?right) }.`);
+  assert.match(out, /:r :is \(\(\) \(1 2\)\) \./);
+  assert.match(out, /:r :is \(\(1\) \(2\)\) \./);
+  assert.match(out, /:r :is \(\(1 2\) \(\)\) \./);
+});
+test('list:length requires an integer result, including for an empty list', () => {
+  const out = checkedReason(`${P}{ () list:length 0. (42 1) list:length "2"^^xsd:integer.
+      (42 1) list:length "2"^^xsd:int } => { :r :is :ok }.
+    { (42 1) list:length "2"^^xsd:decimal } => { :r :is :wrong }.
+    { () list:length 0.0 } => { :r :is :wrong }.`);
+  assert.match(out, /:r :is :ok \./);
+  assert.doesNotMatch(out, /:wrong/);
+});
+test('log:dtlit extracts and checks the datatype of language strings', () => {
+  const out = checkedReason(`${P}{ ("pain" rdf:langString) log:dtlit "pain"@en.
+      (?text ?type) log:dtlit "pain"@fr.
+      (?direction ?dirType) log:dtlit "text"@ar--rtl } => { :r :is (?text ?type); :direction (?direction ?dirType) }.
+    { ("pain" xsd:string) log:dtlit "pain"@en } => { :r :is :wrong }.
+    { ("bread" rdf:langString) log:dtlit "pain"@en } => { :r :is :wrong }.`);
+  assert.match(out, /:r :is \("pain" <http:\/\/www.w3.org\/1999\/02\/22-rdf-syntax-ns#langString>\) \./);
+  assert.match(out, /:r :direction \("text" <http:\/\/www.w3.org\/1999\/02\/22-rdf-syntax-ns#dirLangString>\) \./);
+  assert.doesNotMatch(out, /:wrong/);
+});
+test('log:uri rejects characters forbidden in IRIs before writing an answer', () => {
+  for (const text of ['p>. <a> <b> <c> <d> <e> <', 'a b', 'a\\b', 'a\n', 'a"b', 'a{b', 'a|b', 'a^b', 'a`b']) {
+    assert.equal(reason(`${P}{ ?uri log:uri ${JSON.stringify(text)} } => { :r :is ?uri }.`), '', text);
+  }
+  assert.match(checkedReason(`${P}{ ?uri log:uri "https://example.org/caf\u00e9?x=1#p" } => { :r :is ?uri }.`),
+    /:r :is <https:\/\/example.org\/caf\u00e9\?x=1#p> \./);
+});
+test('string:replace decodes escapes from both a bound list and a written replacement', () => {
+  const replacement = JSON.stringify('\\$\\\\');
+  const out = checkedReason(`${P}:input :value ("abcd" "b" ${replacement}).
+    { :input :value ?args. ?args string:replace ?result } => { :r :bound ?result }.
+    { ("abcd" "b" ${replacement}) string:replace ?result } => { :r :written ?result }.
+    { ("id=42" "([0-9]+)" "[$1]") string:replace ?result } => { :r :capture ?result }.`);
+  assert.match(out, /:r :bound "a\$\\\\cd" \./);
+  assert.match(out, /:r :written "a\$\\\\cd" \./);
+  assert.match(out, /:r :capture "id=\[42\]" \./);
+});
+test('log:implies and log:impliedBy match source rules without solving their premises', () => {
+  const out = checkedReason(`${P}{ :missing :p :v } => { :a :q :b }.
+    { :a :r :b } <= { :a :q :b }.
+    { ?body log:implies { :a :q :b } } => { :r :forward ?body }.
+    { { :a :r :b } log:impliedBy ?body } => { :r :backward ?body }.
+    { ?body log:implies { :a :absent :b } } => { :r :is :wrong }.`);
+  assert.match(out, /:r :forward \{ :missing :p :v \} \./);
+  assert.match(out, /:r :backward \{ :a :q :b \} \./);
+  assert.doesNotMatch(out, /:wrong|\n:a :q :b/);
+});
+test('a rule can match itself and rules generated during reasoning', () => {
+  const out = checkedReason(`${P}:on :is true.
+    { ?body log:implies ?head } => { :r :source true }.
+    { :on :is true } => { { :a :q :b } => { :a :generated :b } }.
+    { ?body log:implies { :a :generated :b } } => { :r :generated ?body }.`);
+  assert.match(out, /:r :source true \./);
+  assert.match(out, /:r :generated \{ :a :q :b \} \./);
+});
+test('queries and backward premises can match source rules', () => {
+  const rule = '{ :missing :p :v } => { :a :q :b }.';
+  const query = checkedReason(`${P}${rule}
+    { ?body log:implies { :a :q :b } } log:query { :r :found ?body }.`);
+  assert.match(query, /:r :found \{ :missing :p :v \} \./);
+  const backward = checkedReason(`${P}${rule}
+    { :r :matched ?body } <= { ?body log:implies { :a :q :b } }.
+    { :r :matched ?body } log:query { :r :found ?body }.`);
+  assert.match(backward, /:r :found \{ :missing :p :v \} \./);
+});
+test('rule patterns preserve variables shared between premise and conclusion', () => {
+  const out = checkedReason(`${P}{ ?x :p ?y } => { ?y :q ?x }.
+    { { ?a :p ?b } log:implies { ?b :q ?a } } => { :r :is :ok }.
+    { { ?a :p ?b } log:implies { ?a :q ?b } } => { :r :is :wrong }.`);
+  assert.match(out, /:r :is :ok \./);
+  assert.doesNotMatch(out, /:wrong/);
+});
+test('a general triple query does not expose source rule descriptions', () => {
+  const out = checkedReason(`${P}:a :p :b. { :a :p :b } => { :a :q :b }.
+    { ?s ?p ?o } log:query { ?s ?p ?o }.`);
+  assert.equal(out, '@prefix : <http://example.org/#> .\n\n:a :q :b .\n:a :p :b .\n');
+});
+test('a forged matched rule is rejected against the compiled source', () => {
+  const r = reasonN3(`${P}{ :missing :p :v } => { :a :q :b }.
+    { ?body log:implies { :a :q :b } } => { :r :found ?body }.`, { proof: true });
+  const forged = r.result.proof.replaceAll('http://example.org/#missing', 'http://example.org/#invented');
+  assert.notEqual(forged, r.result.proof);
+  assert.equal(checkProof(loadText(r.program, 'compiled.js'), forged).valid, false);
 });
 test('a derived rule is applied and reported', () => {
   const out = reason(`${P}:on :is true. :a a :M. { :on :is true } => { { ?x a :M } => { ?x :ok true } }.`);

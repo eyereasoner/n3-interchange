@@ -123,17 +123,17 @@ document whose prefixes to use), `--strings`, `--triples` and `-o FILE`.
 
 ## Coverage
 
-Measured on 2026-11-09 against the eyeling examples (commit `830e0b0`) and
+Measured on 2026-11-10 against the eyeling examples (commit `830e0b0`) and
 the notation3tests suite as eyeling mirrors it:
 
 | Corpus | Result |
 | --- | --- |
-| eyeling examples with an expected output | 172 of 205 match; 22 more need TriG inputs or JavaScript built-ins and were not run |
-| notation3tests | 1139 of 1163 |
+| eyeling examples with an expected output | 169 of 205 match; 11 reach the 5-second limit; 22 more need TriG inputs or JavaScript built-ins and were not run |
+| notation3tests | 1147 of 1163 |
 
 ```sh
-node tools/corpus.mjs ../eyeling/examples
-node tools/notation3tests.mjs ../eyeling/test/notation3tests/tests
+node tools/corpus.mjs --timeout 5 ../eyeling/examples
+node tools/notation3tests.mjs --timeout 20 ../eyeling/test/notation3tests/tests
 ```
 
 The parser reads all 227 eyeling examples. Some built-ins need what eyemind
@@ -142,9 +142,12 @@ built-in and the reason:
 
 | Built-ins | eyemind has no |
 | --- | --- |
-| `log:implies`, `log:impliedBy` in a premise | matching rules as data |
 | `log:trace` | printing while reasoning |
 | `time:localTime`, `gmTime`, `currentTime` | clock |
+
+The example run uses a short time limit to bound work on recursive programs;
+its timeout count is separate from differences in answers. The Notation3
+suite allows longer for tests that fetch documents.
 
 Four eyeling examples that check a `crypto:sha256` digest (calidor, delfour,
 flandor, medior) differ because eyeling hashes the escaped text of a string,
@@ -172,6 +175,10 @@ Other limits:
 - Quoted formulas match as ordered lists of triples, not as sets;
   `log:equalTo` and `log:notEqualTo` compare them as sets, matching blank
   nodes and variables by unification.
+- `log:implies` and `log:impliedBy` in a premise match source and derived
+  rules as triples, including the matching rule itself. This reads their
+  quoted formulas without solving their premises; formula patterns keep
+  the ordered-list matching described above.
 - `log:collectAllIn` and `log:forAllIn` need their formulas written in the
   rule; one only known when the rule runs makes the goal fail.
 - Decimals and doubles are both binary64 floats, and `xsd:float` is one too,

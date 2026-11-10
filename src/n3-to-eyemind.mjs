@@ -45,12 +45,15 @@ export function compileN3Document(doc, { source = 'input', documents = new Map()
   // Only a document that mentions rdf:first, rdf:rest or rdf:nil can write a
   // list out as triples, so only its built-ins read lists that way.
   const views = ['first', 'rest', 'nil'].some((name) => mentions(doc.triples, `${RDF_NS}${name}`));
-  const rulesAsTriples = doc.triples.some((x) => x.p.t === 'iri' && RULE_PREDICATES.has(x.p.v) && isFormulaLike(x.s) &&
-    variablePredicate(triplesOf(x.s)));
+  const rulesAsTriples = doc.triples.some((x) => {
+    if (x.p.t !== 'iri' || (!RULE_PREDICATES.has(x.p.v) && x.p.v !== `${LOG}query`) || !isFormulaLike(x.s) || !isFormulaLike(x.o)) return false;
+    const body = triplesOf(x.p.v === `${LOG}impliedBy` ? x.o : x.s);
+    return (x.p.v !== `${LOG}query` && variablePredicate(body)) || [...RULE_PREDICATES].some((p) => usesPredicate(body, p));
+  });
   for (const triple of doc.triples) {
     const p = triple.p.t === 'iri' ? triple.p.v : null;
     // A rule is also a triple of the document, its variables quoted, which
-    // only a pattern with a variable predicate can find.
+    // a rule predicate or a variable predicate can find.
     if (rulesAsTriples && RULE_PREDICATES.has(p) && isFormulaLike(triple.s) && isFormulaLike(triple.o)) facts.push(`fact(${new Context(false).rdf(triple)})`);
     if (p === `${LOG}implies` && isFormulaLike(triple.s) && isFormulaLike(triple.o)) {
       rules.push(compileRule(triple.s, triple.o, 'forward', needed, views));
@@ -518,13 +521,6 @@ function compileRule(body, head, kind, needed, views = true) {
       }
     }
     if (REGEX_PATTERN.has(p)) x = withPattern(x, REGEX_PATTERN.get(p));
-    if (p === `${STRING}replace` && x.s.t === 'list' && x.s.items[2]?.t === 'literal') {
-      // A replacement escapes $ and \ with a backslash, as in Perl; in
-      // eyemind's replacement $$ is a dollar sign and a backslash is itself.
-      const items = [...x.s.items];
-      items[2] = { ...items[2], v: items[2].v.replace(/\\([$\\])|\$/g, (m, c) => (c === '$' ? '$$' : c === '\\' ? '\\' : m)) };
-      x = { ...x, s: { ...x.s, items } };
-    }
     const builtin = BUILTINS.get(p);
     if (builtin && !negated && !closed && unconstrained(x)) {
       // Every variable of the built-in is unbound and no other goal of the

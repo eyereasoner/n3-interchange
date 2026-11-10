@@ -12,6 +12,7 @@ const LOG = 'http://www.w3.org/2000/10/swap/log#';
 const MATH = 'http://www.w3.org/2000/10/swap/math#';
 const STRING = 'http://www.w3.org/2000/10/swap/string#';
 const LIST = 'http://www.w3.org/2000/10/swap/list#';
+const INVALID_IRI = '[<>"{}|^`\\\\\\x00-\\x20]';
 
 const NUMERIC_TYPES = ['integer', 'decimal', 'double', 'float', 'int', 'long', 'short', 'byte',
   'nonNegativeInteger', 'positiveInteger', 'nonPositiveInteger', 'negativeInteger',
@@ -41,6 +42,14 @@ implied_by(n3_nums_([T, ...R], [N, ...Ns]), [n3_num(T, N), n3_nums_(R, Ns)])`,
 // in value, so 2 and 2.0 agree.
 implied_by(n3_result(V, O), [is_var(O), unify(O, V)])
 implied_by(n3_result(V, O), [is_nonvar(O), n3_num(O, N), eq(V, N)])`,
+  },
+  n3_list_result: {
+    needs: ['n3_num'],
+    text: `
+// A bound list result compares numeric elements by value; an unbound
+// element keeps the term the input supplied.
+fact(n3_list_result([], []))
+implied_by(n3_list_result([X, ...Xs], [Y, ...Ys]), [once(or(unify(X, Y), and(n3_num(X, A), n3_num(Y, B), eq(A, B)))), n3_list_result(Xs, Ys)])`,
   },
   n3_str: {
     text: `
@@ -350,7 +359,13 @@ def(`${STRING}notMatches`, 'n3_string_notMatches', `
 implied_by(n3_string_notMatches(S, O), [n3_str(S, A), n3_str(O, P), not(regex_match(P, A))])`, ['n3_str']);
 def(`${STRING}replace`, 'n3_string_replace', `
 // (Text Pattern Replacement) string:replace Result, every match replaced.
-implied_by(n3_string_replace([S, P0, R0], O), [n3_str(S, A), n3_str(P0, P), n3_str(R0, R), regex_replace(P, A, R, B), n3_str_result(B, O)])`, ['n3_str', 'n3_str_result']);
+implied_by(n3_string_replace([S, P0, R0], O), [n3_str(S, A), n3_str(P0, P), n3_str(R0, R), atom_chars(R, Cs), n3_replacement(Cs, Ds), atom_chars(D, Ds), regex_replace(P, A, D, B), n3_str_result(B, O)])
+// A backslash escapes a dollar sign or backslash in N3 replacements;
+// ECMAScript spells a literal dollar sign as $$.
+fact(n3_replacement([], []))
+implied_by(n3_replacement([${JSON.stringify('\\')}, '$', ...R], ['$', '$', ...U]), n3_replacement(R, U))
+implied_by(n3_replacement([${JSON.stringify('\\')}, ${JSON.stringify('\\')}, ...R], [${JSON.stringify('\\')}, ...U]), n3_replacement(R, U))
+implied_by(n3_replacement([C, ...R], [C, ...U]), [not_unify([C, ...R], [${JSON.stringify('\\')}, '$', ..._]), not_unify([C, ...R], [${JSON.stringify('\\')}, ${JSON.stringify('\\')}, ..._]), n3_replacement(R, U)])`, ['n3_str', 'n3_str_result']);
 def(`${STRING}scrape`, 'n3_string_scrape', `
 // (Text Pattern) string:scrape Group: the first group of the first match.
 implied_by(n3_string_scrape([S, P0], O), [n3_str(S, A), n3_str(P0, P), once(regex_find(P, A, [_, G, ..._])), n3_str_result(G, O)])`, ['n3_str', 'n3_str_result']);
@@ -420,7 +435,9 @@ implied_by(n3_list_last(L, X), [is_nonvar(L), n3_last(L, X)])
 implied_by(n3_last([X], X), 'true')
 implied_by(n3_last([_, Y, ...R], X), n3_last([Y, ...R], X))`);
 def(`${LIST}length`, 'n3_list_length', `
-implied_by(n3_list_length(L, O), [is_nonvar(L), n3_length(L, N), n3_result(N, O)])`, ['n3_length', 'n3_result']);
+implied_by(n3_list_length(L, O), [is_nonvar(L), n3_length(L, N), n3_integer_result(N, O)])
+implied_by(n3_integer_result(N, O), [is_var(O), unify(O, N)])
+implied_by(n3_integer_result(N, O), [is_nonvar(O), n3_num(O, V), is_int(V), eq(N, V)])`, ['n3_length', 'n3_num']);
 def(`${LIST}member`, 'n3_list_member', `
 implied_by(n3_list_member(L, X), [is_nonvar(L), n3_member(X, L)])`, ['n3_member']);
 def(`${LIST}in`, 'n3_list_in', `
@@ -429,13 +446,13 @@ def(`${LIST}notMember`, 'n3_list_notMember', `
 implied_by(n3_list_notMember(L, X), not(n3_member(X, L)))`, ['n3_member']);
 def(`${LIST}append`, 'n3_list_append', `
 // (L1 ... Ln) list:append L; with L given and two lists, every split.
-implied_by(n3_list_append(Ls, L), [is_ground(Ls), n3_appends(Ls, L)])
+implied_by(n3_list_append(Ls, L), [is_ground(Ls), n3_appends(Ls, R), n3_list_result(R, L)])
 implied_by(n3_list_append(Ls, L), [is_nonvar(Ls), unify(Ls, [A, B]), n3_ground_flag([A, B], F), unify(F, 'no'), is_nonvar(L), n3_append(A, B, L)])
 // n3_ground_flag(T, F): F is yes or no as T is ground, decided without
 // negation, which needs bound variables.
 implied_by(n3_ground_flag(T, F), once(or(and(is_ground(T), unify(F, 'yes')), unify(F, 'no'))))
 fact(n3_appends([], []))
-implied_by(n3_appends([L, ...Ls], R), [n3_appends(Ls, R0), n3_append(L, R0, R)])`, ['n3_append']);
+implied_by(n3_appends([L, ...Ls], R), [n3_appends(Ls, R0), n3_append(L, R0, R)])`, ['n3_append', 'n3_list_result']);
 def(`${LIST}memberAt`, 'n3_list_memberAt', `
 // (L I) list:memberAt X, counting from 0.
 implied_by(n3_list_memberAt([L, I], X), [is_nonvar(L), n3_member_at(L, 0, I, X)])`, ['n3_member_at']);
@@ -534,7 +551,7 @@ implied_by(n3_not_equal('yes', A, B), findall('same', n3_same_formula(A, B), [])
 implied_by(n3_not_equal('no', A, B), not_unify(A, B))`, ['n3_formulas']);
 def(`${LOG}uri`, 'n3_log_uri', `
 implied_by(n3_log_uri(S, O), [is_nonvar(S), unify(S, iri(U)), n3_str_result(U, O)])
-implied_by(n3_log_uri(S, O), [is_var(S), n3_str(O, U), unify(S, iri(U))])`, ['n3_str', 'n3_str_result']);
+implied_by(n3_log_uri(S, O), [is_var(S), n3_str(O, U), not(regex_match(${JSON.stringify(INVALID_IRI)}, U)), unify(S, iri(U))])`, ['n3_str', 'n3_str_result']);
 def(`${LOG}rawType`, 'n3_log_rawType', `
 implied_by(n3_log_rawType(S, O), [is_nonvar(S), once(n3_raw_type(S, T)), unify(O, iri(T))])
 implied_by(n3_raw_type(graph(_), '${LOG}Formula'), 'true')
@@ -557,6 +574,8 @@ fact(n3_number_type('${XSD}integer', 'int'), n3_number_type('${XSD}decimal', 'fl
 implied_by(n3_number_kind(N, 'int'), is_int(N))
 implied_by(n3_number_kind(N, 'float'), is_number(N))
 implied_by(n3_lit_parts(literal(A, datatype(U)), A, U), 'true')
+implied_by(n3_lit_parts(literal(A, lang(_)), A, '${RDF}langString'), 'true')
+implied_by(n3_lit_parts(literal(A, lang(_, _)), A, '${RDF}dirLangString'), 'true')
 implied_by(n3_lit_parts(N, A, '${XSD}integer'), [is_int(N), number_chars(N, Cs), atom_chars(A, Cs)])
 implied_by(n3_lit_parts(N, A, '${XSD}decimal'), [is_float(N), number_chars(N, Cs), atom_chars(A, Cs)])`, ['n3_str']);
 def(`${LOG}langlit`, 'n3_log_langlit', `
@@ -564,11 +583,8 @@ def(`${LOG}langlit`, 'n3_log_langlit', `
 implied_by(n3_log_langlit([S, T], O), [is_nonvar(S), n3_str(S, A), n3_str(T, L), unify(O, literal(A, lang(L)))])
 implied_by(n3_log_langlit([S, T], O), [is_var(S), unify(O, literal(A, lang(L))), unify(S, literal(A, datatype('${XSD}string'))), unify(T, literal(L, datatype('${XSD}string')))])`, ['n3_str']);
 
-// Built-ins that need what eyemind deliberately leaves out: clocks,
-// printing, and rules as data.
+// Built-ins that need what eyemind deliberately leaves out: clocks and printing.
 export const UNSUPPORTED = new Map([
   [`${LOG}trace`, 'printing while reasoning'],
-  [`${LOG}implies`, 'matching rules as data'],
-  [`${LOG}impliedBy`, 'matching rules as data'],
 ]);
 for (const name of ['localTime', 'gmTime', 'currentTime']) UNSUPPORTED.set(`http://www.w3.org/2000/10/swap/time#${name}`, 'clock');

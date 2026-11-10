@@ -69,6 +69,7 @@ are ordinary derivations, so a proof cites them like any other.
 | `(T { F } L) log:collectAllIn ?S` | `findall(T, F, L)` |
 | `({ A } { B }) log:forAllIn ?S` | `not([A, not(B)])` |
 | `F1 log:includes F2`, formulas | `n3_includes(F1, F2)`, each triple of `F2` in `F1` |
+| `B log:implies H`, `H log:impliedBy B` in a premise | `rdf(B, iri(Predicate), H)` or its reverse, matching source and derived rule descriptions |
 | `((L) P) list:map R` | `findall(Y, [n3_member(X, L), rdf(X, P, Y)], R)` |
 | `log:equalTo`, `log:notEqualTo` | `unify`, `not_unify` for a constant that is no formula; formulas as sets, matched by unification |
 | `crypto:md5`, `sha`, `sha256`, `sha512` | eyemind's `digest` of the string's UTF-8 bytes, in hexadecimal |
@@ -90,7 +91,12 @@ A built-in whose arguments are all variables that no other goal of the
 premise mentions has nothing to compute; it holds without binding anything,
 as in N3 reasoners, and its variables stay universal in any rule the
 conclusion states. A rule is also stated as a triple, its variables quoted,
-when some rule's pattern has a variable predicate that could find it.
+when a rule's premise has a variable predicate, or a rule or query matches
+an explicit rule predicate. This includes backward premises and nested
+formulas. A general triple query alone does not expose source rules.
+Matching a rule does not solve its premise, and a matching rule can find
+itself. A derived rule is already reported as a triple, so it can be matched
+too.
 
 `math:greaterThan` and the other comparisons also order `"INF"` and `"-INF"`
 as `xsd:float` or `xsd:double`: -INF before every number, INF after.
@@ -137,8 +143,19 @@ a brace that is no quantifier is escaped.
 Numeric built-ins compare and return values, so `2` and `2.0` agree as
 objects. Integer division that is exact gives an integer, `math:rounded`
 rounds halves upward, and sums and products run from the left, as written.
+`list:append` also compares bound numeric elements by value, while preserving
+the input terms when it constructs a result. `list:length` requires an
+integer result, including integer subtypes, and rejects a decimal or float
+even when its value is integral. `log:dtlit` can extract a language string's
+lexical form and `rdf:langString` datatype without discarding its language.
+In reverse, `log:uri` rejects characters forbidden in an IRI.
 Strings of an integral float, below 10^15, are written without a fraction,
 `29` rather than `29.0`.
+
+Replacement strings escape a dollar sign or backslash with a backslash.
+`string:replace` translates these escapes while reasoning, including when
+the replacement arrives through a variable or an RDF list. Unescaped
+capture references such as `$1` retain their meaning.
 
 ### Evaluation order
 
