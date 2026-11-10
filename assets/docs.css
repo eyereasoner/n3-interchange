@@ -1,0 +1,241 @@
+/* The README and mapping guide, rendered by Jekyll through
+   _layouts/default.html with eyemind's masthead; the documents are on
+   white, as on github.com. */
+:root {
+  color-scheme: light;
+  --bg: #fff;
+  --line: #d1d5db;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.documentation {
+  max-width: 1100px;
+  margin: auto;
+  padding: 30px 48px;
+}
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  min-width: 0;
+  text-decoration: none;
+  font-size: 31px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.brand img {
+  flex: none;
+  border-radius: 50%;
+}
+.brand h1 {
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+  line-height: 1.2;
+  letter-spacing: inherit;
+}
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.site-nav [aria-current="page"] {
+  text-decoration-thickness: 2px;
+}
+/* The documents themselves follow GitHub's rendering of Markdown, so a page
+   reads as the file does on github.com: its type, inline code, code blocks,
+   tables and syntax colors. */
+.documentation article {
+  max-width: 900px;
+  margin: 48px auto;
+  color: #1f2328;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+.documentation article > :first-child {
+  margin-top: 0;
+}
+.documentation article :where(p, ul, ol, pre, table, blockquote, .highlighter-rouge) {
+  margin: 0 0 16px;
+}
+.documentation article :is(h2, h3, h4) {
+  margin: 24px 0 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  scroll-margin-top: 20px;
+}
+.documentation article h2 {
+  padding-bottom: .3em;
+  border-bottom: 1px solid #d1d9e0b3;
+  font-size: 1.5em;
+}
+.documentation article h3 {
+  font-size: 1.25em;
+}
+.documentation article h4 {
+  font-size: 1em;
+}
+.documentation article a {
+  color: #0969da;
+  text-decoration: none;
+}
+.documentation article a:hover {
+  text-decoration: underline;
+}
+.documentation article img {
+  max-width: 100%;
+}
+.documentation article :is(ul, ol) {
+  padding-left: 2em;
+}
+.documentation article li + li {
+  margin-top: .25em;
+}
+.documentation article li > :is(ul, ol) {
+  margin: 0;
+}
+.documentation article li > p {
+  margin-top: 16px;
+}
+.documentation article hr {
+  height: .25em;
+  margin: 24px 0;
+  padding: 0;
+  border: 0;
+  background: #d1d9e0;
+}
+.documentation article blockquote {
+  padding: 0 1em;
+  border-left: .25em solid #d1d9e0;
+  color: #59636e;
+}
+.documentation article code {
+  margin: 0;
+  padding: .2em .4em;
+  border-radius: 6px;
+  background: #818b981f;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 85%;
+  white-space: break-spaces;
+}
+.documentation article pre {
+  overflow: auto;
+  padding: 16px;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #1f2328;
+  font-size: 85%;
+  line-height: 1.45;
+  word-wrap: normal;
+}
+.documentation article pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 100%;
+  white-space: pre;
+}
+.documentation article .highlight pre {
+  margin: 0;
+}
+.documentation article table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+.documentation article :is(th, td) {
+  padding: 6px 13px;
+  border: 1px solid #d1d9e0;
+  text-align: left;
+  vertical-align: top;
+}
+.documentation article th {
+  font-weight: 600;
+}
+.documentation article tr {
+  border-top: 1px solid #d1d9e0b3;
+  background: #fff;
+}
+.documentation article tr:nth-child(2n) {
+  background: #f6f8fa;
+}
+/* GitHub's light syntax colors, on the classes the Rouge highlighter of
+   GitHub Pages gives each token. A name followed by "(" is a call, which
+   the layout marks, since Rouge does not tell it from a variable. */
+.highlight :is(.c, .c1, .cm, .cs, .cp, .cpf) { color: #59636e; }
+.highlight :is(.k, .kd, .kn, .kr, .kv, .o, .ow) { color: #cf222e; }
+.highlight :is(.s, .s1, .s2, .sb, .sc, .sd, .se, .sh, .si, .sx, .sr, .ss, .dl) { color: #0a3069; }
+.highlight :is(.m, .mi, .mf, .mh, .mo, .mb, .il, .kc, .kt, .nb, .bp, .no, .nt, .nl) { color: #0550ae; }
+.language-sh .highlight .nt { color: inherit; }
+.highlight :is(.nf, .fm, .nx.call) { color: #6639ba; }
+.highlight :is(.gd) { color: #82071e; background: #ffebe9; }
+.highlight :is(.gi) { color: #116329; background: #dafbe1; }
+.highlight .err { color: inherit; background: none; }
+footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 0 5px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+@media (max-width: 760px) {
+  .documentation {
+    padding: 20px;
+  }
+  .brand {
+    gap: 8px;
+    font-size: 24px;
+  }
+  .brand img {
+    width: 42px;
+    height: 42px;
+  }
+  .site-nav {
+    width: 100%;
+    gap: 10px 16px;
+    font-size: 12px;
+  }
+  .documentation article {
+    margin: 32px 0;
+  }
+  footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
